@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-orbitron selection:bg-accent selection:text-bg;
+  }
+}
+
+@layer components {
+  .section-card {
+    @apply mx-4 mb-4 p-4 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl transition-all duration-300 shadow-lg hover:border-accent/20 hover:bg-white/[0.07];
+  }
+  
+  .btn-mode {
+    @apply flex-1 py-3 rounded-xl border border-white/10 bg-white/5 text-gray-400 font-semibold transition-all duration-200 active:scale-95;
+  }
+  
+  .btn-mode-active {
+    @apply bg-accent text-bg border-accent shadow-[0_4px_18px_rgba(99,179,237,0.4)];
+  }
+
+  .stat-card {
+    @apply flex flex-col items-center justify-center p-2 rounded-xl bg-white/[0.03] border border-white/10 text-center;
+  }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.animate-shake {
+  animation: shake 0.2s ease-in-out 0s 2;
+}
+
