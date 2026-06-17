@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 import { apiGetStatus } from '../utils/api';
 
 export const useSSE = () => {
-  const { setStatus, setSniffer, addLogs, setIsOnline, isAuthenticated } = useStore();
+  const { setStatus, setSniffer, updateDevice, addLogs, setIsOnline, isAuthenticated } = useStore();
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -61,6 +61,15 @@ export const useSSE = () => {
         }
       });
 
+      es.addEventListener('device', (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          updateDevice(data);
+        } catch (err) {
+          console.error('[SSE] Failed to parse device update', err);
+        }
+      });
+
       es.addEventListener('logs', (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
@@ -79,5 +88,5 @@ export const useSSE = () => {
         eventSourceRef.current = null;
       }
     };
-  }, [setStatus, setSniffer, addLogs, setIsOnline, isAuthenticated]);
+  }, [setStatus, setSniffer, updateDevice, addLogs, setIsOnline, isAuthenticated]);
 };

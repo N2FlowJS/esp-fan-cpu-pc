@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { SystemStatus, SnifferStats, PacketLog } from '../types';
+import { SystemStatus, SnifferStats, PacketLog, DeviceInfo } from '../types';
 
 interface AppState {
   status: SystemStatus | null;
@@ -13,6 +13,7 @@ interface AppState {
   // Actions
   setStatus: (status: SystemStatus) => void;
   setSniffer: (sniffer: SnifferStats) => void;
+  updateDevice: (device: DeviceInfo) => void;
   addLogs: (newLogs: PacketLog[]) => void;
   setIsOnline: (online: boolean) => void;
   clearLogs: () => void;
@@ -35,6 +36,20 @@ export const useStore = create<AppState>()(
       setSniffer: (sniffer) => set((state) => ({
         sniffer: { ...state.sniffer, ...sniffer },
       })),
+
+      updateDevice: (device) => set((state) => {
+        const devices = state.sniffer?.devices || [];
+        const index = devices.findIndex(d => d.mac === device.mac && d.isAP === device.isAP);
+        let newDevices = [...devices];
+        if (index !== -1) {
+          newDevices[index] = { ...newDevices[index], ...device };
+        } else {
+          newDevices.push(device);
+        }
+        return {
+          sniffer: { ...state.sniffer, devices: newDevices } as SnifferStats
+        };
+      }),
 
       addLogs: (newLogs) => set((state) => {
         // Optimized: just prepend and slice. 500 is enough for real-time trace.

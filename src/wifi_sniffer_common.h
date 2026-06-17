@@ -53,6 +53,13 @@ struct BeaconInfo {
     int utilization;
 };
 
+struct SnifferQueuedPacket {
+    uint8_t  payload[512];
+    int      len;
+    int      rssi;
+    uint32_t timestamp;
+};
+
 // ── Global State (defined in wifi_sniffer.cpp) ────────────────────────────────
 
 extern bool     s_sniffing;
@@ -63,6 +70,8 @@ extern uint8_t  s_currentChannel;
 extern std::vector<SnifferDevice>   s_devices;
 extern std::vector<SnifferPacketLog> s_packetLogs;
 extern std::mutex                   s_snifferMutex;
+extern TaskHandle_t                 s_snifferTaskHandle;
+extern QueueHandle_t                s_packetQueue;
 
 // ── Statistics Counters ───────────────────────────────────────────────────────
 

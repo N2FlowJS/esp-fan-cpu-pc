@@ -148,6 +148,32 @@ void webServerBroadcastLog(const String& proto, const String& subtype, const Str
     webServerBroadcast("logs", json.c_str());
 }
 
+void webServerBroadcastDevice(const uint8_t* mac, bool isAP, int rssi, const String& ssid, uint8_t channel, const String& security, const String& wifiGen, int clients, int util, const String& vendor, uint32_t packetCount, uint32_t lastSeen) {
+    JsonDocument doc;
+    JsonObject obj = doc.to<JsonObject>();
+    
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    
+    obj["mac"] = String(mac_str);
+    obj["isAP"] = isAP;
+    obj["rssi"] = rssi;
+    obj["ssid"] = ssid;
+    obj["channel"] = channel;
+    if (security.length()) obj["security"] = security;
+    if (wifiGen.length())  obj["wifiGen"]  = wifiGen;
+    if (clients >= 0)      obj["clients"]  = clients;
+    if (util >= 0)         obj["utilization"] = util;
+    if (vendor.length())   obj["vendor"]   = vendor;
+    obj["packetCount"] = packetCount;
+    obj["lastSeen"] = (double)lastSeen / 1000.0;
+
+    String json;
+    serializeJson(doc, json);
+    webServerBroadcast("device", json.c_str());
+}
+
 // ============================================================
 //  REST API Handlers
 // ============================================================
@@ -360,8 +386,7 @@ void webServerSetup() {
         }
     );
 
-    s_server.on(
-        "/api/sniffer/owner", HTTP_POST,
+    s_server.on("/api/sniffer/owner", HTTP_POST,
         [](AsyncWebServerRequest* req) { if (!isReqAuth(req)) req->send(401); },
         nullptr,
         [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
@@ -374,6 +399,86 @@ void webServerSetup() {
             req->send(200, "application/json", "{\"ok\":true}");
         }
     );
+
+    s_server.on("/api/ping", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!isReqAuth(req)) { req->send(401); return; }
+        String host = req->arg("host");
+        if (host.length() == 0) { req->send(400); return; }
+
+        IPAddress targetIP;
+        bool ok = WiFi.hostByName(host.c_str(), targetIP);
+
+        JsonDocument doc;
+        if (ok) {
+            WiFiClient client;
+            uint32_t start = millis();
+            // Simple TCP "ping" check on common ports
+            bool connected = client.connect(targetIP, 80);
+            if (!connected) connected = client.connect(targetIP, 443);
+            uint32_t end = millis();
+
+            if (connected) {
+                doc["success"] = true;
+                doc["message"] = "Reply from " + targetIP.toString() + " (TCP) in " + String(end - start) + "ms";
+            } else {
+                doc["success"] = false;
+                doc["message"] = "Host " + targetIP.toString() + " resolved but unreachable (TCP 80/443 timeout)";
+            }
+        } else {
+            doc["success"] = false;
+            doc["message"] = "Ping request could not find host " + host + ". Please check the name and try again.";
+        }
+
+        String json;
+        serializeJson(doc, json);
+        req->send(200, "application/json", json);
+    });
+
+    s_server.on("/api/nslookup", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!isReqAuth(req)) { req->send(401); return; }
+        String host = req->arg("host");
+        if (host.length() == 0) { req->send(400); return; }
+
+        IPAddress targetIP;
+        bool ok = WiFi.hostByName(host.c_str(), targetIP);
+
+        JsonDocument doc;
+        if (ok) {
+            doc["success"] = true;
+            doc["message"] = "Name: " + host + "\nAddress: " + targetIP.toString();
+        } else {
+            doc["success"] = false;
+            doc["message"] = "Can't find " + host + ": Non-existent domain";
+        }
+
+        String json;
+        serializeJson(doc, json);
+        req->send(200, "application/json", json);
+    });
+
+    s_server.on("/api/scan", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!isReqAuth(req)) { req->send(401); return; }
+        String host = req->arg("host");
+        int port = req->arg("port").toInt();
+        if (host.length() == 0 || port <= 0) { req->send(400); return; }
+
+        WiFiClient client;
+        uint32_t start = millis();
+        bool connected = client.connect(host.c_str(), port);
+        uint32_t end = millis();
+
+        JsonDocument doc;
+        doc["success"] = connected;
+        if (connected) {
+            doc["message"] = "Port " + String(port) + " is OPEN (Connected in " + String(end - start) + "ms)";
+        } else {
+            doc["message"] = "Port " + String(port) + " is CLOSED or filtered";
+        }
+
+        String json;
+        serializeJson(doc, json);
+        req->send(200, "application/json", json);
+    });
 
     s_server.on(
         "/api/wifi", HTTP_POST,
@@ -632,8 +737,5 @@ void webServerLoop() {
             serializeJson(snifDoc, snifJson);
             webServerBroadcast("sniffer", snifJson.c_str());
         }
-    }
-}
-      }
     }
 }

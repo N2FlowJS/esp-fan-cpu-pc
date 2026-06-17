@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { TabNav } from './components/TabNav';
 import { DashboardTab } from './components/tabs/DashboardTab';
 import { SnifferTab } from './components/tabs/SnifferTab';
+import { NetworkTab } from './components/tabs/NetworkTab';
 import { SystemTab } from './components/tabs/SystemTab';
 import { PacketInspector } from './components/PacketInspector';
 import { LoginPage } from './components/LoginPage';
@@ -12,7 +13,7 @@ import { PacketLog } from './types';
 import { apiSetMode, apiSetSpeed, apiStep, setLedConfig } from './utils/api';
 
 const App = () => {
-  const [activeTab, setActiveTab] = useState<'dash' | 'snif' | 'sys'>('dash');
+  const [activeTab, setActiveTab] = useState<'dash' | 'snif' | 'sys' | 'net'>('dash');
   const [inspectPacket, setInspectPacket] = useState<{ log: PacketLog, seq: number } | null>(null);
   
   const { isAuthenticated, status, sniffer, logs, isOnline, clearLogs, setAuthenticated } = useStore();
@@ -71,6 +72,10 @@ const App = () => {
             <SnifferTab 
               onInspect={(log, seq) => setInspectPacket({ log, seq })}
             />
+          )}
+
+          {activeTab === 'net' && (
+            <NetworkTab />
           )}
 
           {activeTab === 'sys' && (

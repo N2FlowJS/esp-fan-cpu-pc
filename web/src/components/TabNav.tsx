@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Wifi, Settings } from 'lucide-react';
+import { Activity, Wifi, Settings, Globe } from 'lucide-react';
 
 interface TabNavProps {
   activeTab: string;
@@ -10,6 +10,7 @@ export const TabNav: React.FC<TabNavProps> = ({ activeTab, onTabChange }) => {
   const tabs = [
     { id: 'dash', label: 'DASHBOARD', icon: Activity },
     { id: 'snif', label: 'SNIFFER', icon: Wifi },
+    { id: 'net', label: 'NETWORK', icon: Globe },
     { id: 'sys', label: 'SYSTEM', icon: Settings },
   ];
 

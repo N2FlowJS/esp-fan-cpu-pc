@@ -106,6 +106,8 @@ uint8_t s_currentChannel = 1;
 std::vector<SnifferDevice> s_devices;
 std::vector<SnifferPacketLog> s_packetLogs;
 std::mutex s_snifferMutex;
+TaskHandle_t s_snifferTaskHandle = nullptr;
+QueueHandle_t s_packetQueue = nullptr;
 
 // ── Statistics Counters ───────────────────────────────────────────────────────
 
@@ -137,6 +139,7 @@ volatile uint32_t s_rollingDeauthCount = 0;
 static uint32_t s_lastHopTime = 0;
 static uint32_t s_lastWarningTime = 0;
 static bool s_pcapSerialActive = false;
+static bool s_jsonSerialActive = true;
 
 // ── PCAP Structures (IEEE 802.11) ─────────────────────────────────────────────
 #pragma pack(push, 1)
@@ -177,6 +180,34 @@ void snifferSetPcapSerial(bool enable) {
 
 bool snifferIsPcapSerialActive() {
     return s_pcapSerialActive;
+}
+
+void snifferSetJsonSerial(bool enable) {
+    s_jsonSerialActive = enable;
+}
+
+void snifferPrintDevicesJson() {
+    JsonDocument doc;
+    doc["type"] = "devices";
+    JsonArray arr = doc["data"].to<JsonArray>();
+    
+    std::lock_guard<std::mutex> lock(s_snifferMutex);
+    for (const auto& dev : s_devices) {
+        JsonObject obj = arr.add<JsonObject>();
+        obj["isAP"] = dev.isAP;
+        char mac_str[18];
+        snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 dev.mac[0], dev.mac[1], dev.mac[2], dev.mac[3], dev.mac[4], dev.mac[5]);
+        obj["mac"] = String(mac_str);
+        obj["rssi"] = dev.rssi;
+        obj["ssid"] = dev.ssid;
+        obj["channel"] = dev.channel;
+        if (dev.security.length()) obj["security"] = dev.security;
+        obj["packetCount"] = dev.packetCount;
+        obj["lastSeen"] = (double)dev.lastSeen / 1000.0;
+    }
+    serializeJson(doc, Serial);
+    Serial.println();
 }
 
 // ── Core Logging Function ─────────────────────────────────────────────────────
@@ -306,7 +337,7 @@ void addPacketLog(const String& proto, const String& subtype,
     }
 
     s_packetLogs.push_back(entry);
-    if (s_packetLogs.size() > 20) {
+    if (s_packetLogs.size() > 5) {
         s_packetLogs.erase(s_packetLogs.begin());
     }
 
@@ -352,6 +383,35 @@ uint8_t snifferGetChannel() {
     return s_currentChannel;
 }
 
+// ── snifferWorkerTask ────────────────────────────────────────────────────────
+
+static void snifferWorkerTask(void* pvParameters) {
+    SnifferQueuedPacket qpkt;
+    Serial.println("[SNIFFER] Worker task started on Core 1");
+    while (true) {
+        if (xQueueReceive(s_packetQueue, &qpkt, portMAX_DELAY) == pdPASS) {
+            uint8_t* payload = qpkt.payload;
+            int len = qpkt.len;
+            int rssi = qpkt.rssi;
+
+            if (len < 24) {
+                s_otherCount++;
+                continue;
+            }
+
+            uint8_t frame_control = payload[0];
+            uint8_t type_val = frame_control & 0x0C;
+            if (type_val == 0x00) { // Management Frame
+                dispatchMgmtFrame(frame_control, payload, len, rssi);
+            } else if (type_val == 0x08) { // Data Frame
+                dispatchDataFrame(frame_control, payload, len, rssi);
+            } else {
+                s_otherCount++;
+            }
+        }
+    }
+}
+
 // ── Promiscuous Callback ──────────────────────────────────────────────────────
 
 static void wifi_promiscuous_rx_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
@@ -359,15 +419,13 @@ static void wifi_promiscuous_rx_cb(void* buf, wifi_promiscuous_pkt_type_t type) 
     uint8_t* payload = pkt->payload;
     int len = pkt->rx_ctrl.sig_len;
 
-    // Filter out ESP's own traffic and excluded devices
+    // 1. Quick filtering (Owner MACs and Filter lists)
     if (len >= 16) {
         initializeEspMacs();
 
         // Filter out Owner MACs (ESP itself and connected clients)
         if (!s_ownerMacs.empty()) {
-            char bufRa[18];
-            char bufTa[18];
-            char bufAddr3[18] = "";
+            char bufRa[18], bufTa[18], bufAddr3[18] = "";
             snprintf(bufRa, sizeof(bufRa), "%02X:%02X:%02X:%02X:%02X:%02X",
                      payload[4], payload[5], payload[6], payload[7], payload[8], payload[9]);
             snprintf(bufTa, sizeof(bufTa), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -376,20 +434,18 @@ static void wifi_promiscuous_rx_cb(void* buf, wifi_promiscuous_pkt_type_t type) 
                 snprintf(bufAddr3, sizeof(bufAddr3), "%02X:%02X:%02X:%02X:%02X:%02X",
                          payload[16], payload[17], payload[18], payload[19], payload[20], payload[21]);
             }
-            String raStr = String(bufRa);
-            String taStr = String(bufTa);
-            String addr3Str = String(bufAddr3);
+            String raStr = String(bufRa), taStr = String(bufTa), a3Str = String(bufAddr3);
             for (const auto& m : s_ownerMacs) {
-                if (m == raStr || m == taStr || m == addr3Str) return;
+                if (m == raStr || m == taStr || m == a3Str) return;
             }
         }
 
-        // Apply Whitelist / Blacklist
         if (isMacFiltered(payload + 4) || isMacFiltered(payload + 10) || (len >= 22 && isMacFiltered(payload + 16))) {
             return;
         }
     }
 
+    // 2. Raw Serial Streaming (PCAP)
     if (s_pcapSerialActive) {
         uint32_t now_ms = millis();
         pcap_packet_header pkt_hdr;
@@ -397,30 +453,23 @@ static void wifi_promiscuous_rx_cb(void* buf, wifi_promiscuous_pkt_type_t type) 
         pkt_hdr.ts_usec = (now_ms % 1000) * 1000;
         pkt_hdr.incl_len = len;
         pkt_hdr.orig_len = len;
-        
         Serial.write((const uint8_t*)&pkt_hdr, sizeof(pkt_hdr));
         Serial.write(payload, len);
-        // Do not process further to save CPU during raw streaming
         return;
     }
 
+    // 3. Queue for worker task processing
     s_packetCount++;
-
-    if (len < 24) {
-        s_otherCount++;
-        return;
-    }
-
-    uint8_t frame_control = payload[0];
-    int rssi = pkt->rx_ctrl.rssi;
-
-    uint8_t type_val = frame_control & 0x0C;
-    if (type_val == 0x00) { // Management Frame
-        dispatchMgmtFrame(frame_control, payload, len, rssi);
-    } else if (type_val == 0x08) { // Data Frame
-        dispatchDataFrame(frame_control, payload, len, rssi);
-    } else {
-        s_otherCount++;
+    if (s_packetQueue != nullptr) {
+        SnifferQueuedPacket qpkt;
+        qpkt.len = (len > 512) ? 512 : len;
+        qpkt.rssi = pkt->rx_ctrl.rssi;
+        qpkt.timestamp = millis();
+        memcpy(qpkt.payload, payload, qpkt.len);
+        
+        if (xQueueSend(s_packetQueue, &qpkt, 0) != pdPASS) {
+            // Queue full, packet dropped
+        }
     }
 }
 
