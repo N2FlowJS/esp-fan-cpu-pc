@@ -197,4 +197,3 @@ uint8_t   fanGetSpeedPct() { return s_speedPct; }
 uint32_t  fanGetRPM()      { return s_rpm; }
 float     fanGetTemp()     { return s_tempC; }
 FanMode   fanGetMode()     { return s_mode; }
-turn s_mode; }

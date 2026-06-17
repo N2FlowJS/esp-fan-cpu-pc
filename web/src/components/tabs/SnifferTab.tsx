@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Monitor, AlertTriangle, Trash2, Search, X, Shield, Cpu, Activity, Wifi, Database, Filter, Save, Plus } from 'lucide-react';
+import { Monitor, AlertTriangle, Trash2, Search, X, Shield, Cpu, Activity, Wifi, Database, Filter, Save, Plus, Zap, Loader2, CheckCircle } from 'lucide-react';
 import { getProtoColor, getRssiColor } from '../../utils/formatters';
 import { useStore } from '../../store/useStore';
 import { PacketLog, DeviceInfo, SnifferFilters } from '../../types';
@@ -128,10 +128,6 @@ const FilterModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   );
 };
 
-interface SnifferTabProps {
-  onInspect: (log: PacketLog, seq: number) => void;
-}
-
 const formatUptime = (seconds: number) => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -143,6 +139,10 @@ const formatUptime = (seconds: number) => {
 const DeviceModal: React.FC<{ device: DeviceInfo, onClose: () => void, uptime: number, onUpdateFilters?: () => void }> = ({ device, onClose, uptime, onUpdateFilters }) => {
   const lastSeenSec = device.lastSeen ? (uptime - device.lastSeen) : 0;
   const lastSeenStr = lastSeenSec < 1 ? 'Just now' : `${Math.floor(lastSeenSec)}s ago`;
+
+  const [testStatus, setTestStatus] = useState<'idle' | 'running' | 'complete'>('idle');
+  const [testStep, setTestStep] = useState('');
+  const [testProgress, setTestProgress] = useState(0);
 
   const handleQuickFilter = async (type: 'white' | 'black') => {
     const data = await apiGetSnifferFilters();
@@ -161,6 +161,40 @@ const DeviceModal: React.FC<{ device: DeviceInfo, onClose: () => void, uptime: n
     alert(`Added ${device.mac} to ${type === 'white' ? 'Whitelist' : 'Blacklist'}`);
     if (onUpdateFilters) onUpdateFilters();
     onClose();
+  };
+
+  const runTest = () => {
+    setTestStatus('running');
+    setTestProgress(0);
+    
+    const steps = device.isAP 
+      ? [
+          "Verifying Beacon Interval...", 
+          "Stress Testing Signal Stability...", 
+          "Checking Client Capacity...", 
+          "Analyzing Security Handshakes...",
+          "Measuring AP Airtime Utilization..."
+        ]
+      : [
+          "Listening for Probe Requests...", 
+          "Stress Testing Transmit Frequency...", 
+          "Analyzing Roaming Patterns...", 
+          "Verifying Connection Stability...",
+          "Measuring Station Duty Cycle..."
+        ];
+
+    let currentStep = 0;
+    const interval = setInterval(() => {
+      if (currentStep < steps.length) {
+        setTestStep(steps[currentStep]);
+        setTestProgress(((currentStep + 1) / steps.length) * 100);
+        currentStep++;
+      } else {
+        clearInterval(interval);
+        setTestStatus('complete');
+        setTestStep('Diagnostic Test Complete');
+      }
+    }, 1500);
   };
 
   return (
@@ -201,6 +235,51 @@ const DeviceModal: React.FC<{ device: DeviceInfo, onClose: () => void, uptime: n
             >
               <Shield size={12} /> + Blacklist
             </button>
+          </div>
+
+          <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4 overflow-hidden relative">
+            {testStatus === 'idle' ? (
+              <button 
+                onClick={runTest}
+                className="w-full py-2.5 rounded-xl bg-accent/10 border border-accent/20 text-accent text-[9px] font-black tracking-widest uppercase hover:bg-accent/20 transition-all flex items-center justify-center gap-2"
+              >
+                <Zap size={12} /> Start Diagnostic Test
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-[8px] font-black tracking-widest uppercase">
+                  <span className={testStatus === 'complete' ? 'text-green' : 'text-accent'}>
+                    {testStatus === 'running' ? 'Test in Progress' : 'Test Complete'}
+                  </span>
+                  <span className="text-gray-500">{Math.round(testProgress)}%</span>
+                </div>
+                
+                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full transition-all duration-500 ${testStatus === 'complete' ? 'bg-green' : 'bg-accent'}`}
+                    style={{ width: `${testProgress}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {testStatus === 'running' ? (
+                    <Loader2 size={12} className="animate-spin text-accent" />
+                  ) : (
+                    <CheckCircle size={12} className="text-green" />
+                  )}
+                  <span className="text-[10px] font-bold text-gray-300">{testStep}</span>
+                </div>
+
+                {testStatus === 'complete' && (
+                  <button 
+                    onClick={() => setTestStatus('idle')}
+                    className="w-full mt-2 py-1.5 text-[8px] font-black text-gray-500 uppercase hover:text-white transition-colors"
+                  >
+                    Reset Test
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">

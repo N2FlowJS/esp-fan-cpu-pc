@@ -4,6 +4,7 @@
  * All functions used by mgmt, data, ipv4, ipv6 parsers.
  */
 #include "wifi_sniffer_common.h"
+#include "web_server.h"
 
 // ── DNS Helpers ───────────────────────────────────────────────────────────────
 
@@ -734,6 +735,10 @@ bool isRecentlySeen(const uint8_t* mac, bool isAP, int rssi,
             if (wifiGen.length())  dev.wifiGen = wifiGen;
             if (clients >= 0)      dev.clients = clients;
             if (util >= 0)         dev.utilization = util;
+
+            // Stream update to clients
+            webServerBroadcastDevice(dev.mac, dev.isAP, dev.rssi, dev.ssid, dev.channel, dev.security, dev.wifiGen, dev.clients, dev.utilization, dev.vendor, dev.packetCount, dev.lastSeen);
+
             return diff < 15000;
         }
     }
@@ -751,7 +756,11 @@ bool isRecentlySeen(const uint8_t* mac, bool isAP, int rssi,
     d.clients  = clients;
     d.utilization = util;
     d.vendor   = getMacVendor(mac);
-    if (s_devices.size() >= 100) s_devices.erase(s_devices.begin());
+
+    // Stream new device to clients
+    webServerBroadcastDevice(d.mac, d.isAP, d.rssi, d.ssid, d.channel, d.security, d.wifiGen, d.clients, d.utilization, d.vendor, d.packetCount, d.lastSeen);
+
+    if (s_devices.size() >= 20) s_devices.erase(s_devices.begin());
     s_devices.push_back(d);
     return false;
 }

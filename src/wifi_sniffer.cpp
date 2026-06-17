@@ -137,6 +137,7 @@ volatile uint32_t s_rollingDeauthCount = 0;
 static uint32_t s_lastHopTime = 0;
 static uint32_t s_lastWarningTime = 0;
 static bool s_pcapSerialActive = false;
+static bool s_jsonSerialActive = true;
 
 // ── PCAP Structures (IEEE 802.11) ─────────────────────────────────────────────
 #pragma pack(push, 1)
@@ -306,7 +307,7 @@ void addPacketLog(const String& proto, const String& subtype,
     }
 
     s_packetLogs.push_back(entry);
-    if (s_packetLogs.size() > 20) {
+    if (s_packetLogs.size() > 5) {
         s_packetLogs.erase(s_packetLogs.begin());
     }
 
