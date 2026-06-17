@@ -82,7 +82,7 @@ void fanSetup() {
     // --- Load persistent settings ---
     Preferences prefs;
     prefs.begin("fan_settings", false); // read-write (creates if not exists)
-    uint8_t savedMode = prefs.getUChar("mode", static_cast<uint8_t>(FanMode::AUTO)); // mặc định AUTO để an toàn
+    uint8_t savedMode = prefs.getUChar("mode", static_cast<uint8_t>(FanMode::AUTO)); // default to AUTO for safety
     uint8_t savedSpeed = prefs.getUChar("speed", 30);
     prefs.end();
     
@@ -136,15 +136,20 @@ void fanLoop() {
         // RPM = (pulses / PPR) * (60000 / elapsed_ms)
         s_rpm = (count * 60000UL) / (FAN_TACH_PPR * elapsed);
 
+#if USE_LEDC_V3
         Serial.printf("[FAN] RPM: %lu | Temp: %.2f°C | Speed: %d%%\n",
                       s_rpm, s_tempC, s_speedPct);
+#else
+        Serial.printf("[FAN] RPM: %lu | Temp: %.2f°C | Speed: %d%% | LEDC Freq: %lu Hz | LEDC Duty: %lu\n",
+                      s_rpm, s_tempC, s_speedPct, ledcReadFreq(FAN_PWM_CHANNEL), ledcRead(FAN_PWM_CHANNEL));
+#endif
     }
 
     // --- Temperature update ---
     if (now - s_lastTempTime >= TEMP_READ_INTERVAL_MS) {
         s_lastTempTime = now;
 
-        // Đọc cảm biến nhiệt nội bộ ESP32-S3 (legacy driver)
+        // Read ESP32-S3 internal temperature sensor (legacy driver)
         float raw = 0.0f;
         temp_sensor_read_celsius(&raw);
         s_tempC = raw + TEMP_OFFSET_C;
@@ -162,7 +167,7 @@ void fanLoop() {
 void fanSetSpeed(uint8_t percent) {
     s_speedPct = constrain(percent, 0, 100);
     
-    // Chỉ lưu tốc độ thủ công vào Flash khi ở chế độ MANUAL
+    // Only save manual speed to Flash when in MANUAL mode
     if (s_mode == FanMode::MANUAL) {
         Preferences prefs;
         prefs.begin("fan_settings", false); // read-write
@@ -192,3 +197,4 @@ uint8_t   fanGetSpeedPct() { return s_speedPct; }
 uint32_t  fanGetRPM()      { return s_rpm; }
 float     fanGetTemp()     { return s_tempC; }
 FanMode   fanGetMode()     { return s_mode; }
+turn s_mode; }

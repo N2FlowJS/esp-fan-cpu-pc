@@ -34,12 +34,22 @@ static void handleArp(const uint8_t* payload, int len, int llc_offset,
 
     if (op == 1) { // Request
         proto_str = "ARP";
-        sub_str   = "Req";
-        info_str  = "Who has " + String(target_ip) + "? Tell " + String(sender_ip);
+        if (strcmp(sender_ip, target_ip) == 0) {
+            sub_str   = "Grat";
+            info_str  = "Gratuitous ARP: Announcement for " + String(sender_ip);
+        } else {
+            sub_str   = "Req";
+            info_str  = "Who has " + String(target_ip) + "? Tell " + String(sender_ip);
+        }
     } else if (op == 2) { // Reply
         proto_str = "ARP";
-        sub_str   = "Rep";
-        info_str  = String(sender_ip) + " is at " + String(sender_mac);
+        if (strcmp(sender_ip, target_ip) == 0) {
+            sub_str   = "Grat";
+            info_str  = "Gratuitous ARP: Reply for " + String(sender_ip);
+        } else {
+            sub_str   = "Rep";
+            info_str  = String(sender_ip) + " is at " + String(sender_mac);
+        }
     } else {
         proto_str = "ARP";
         sub_str   = "Op:" + String(op);
@@ -71,23 +81,35 @@ static void handleEapol(const uint8_t* payload, int len, int llc_offset,
         bool install = (key_info & 0x0040) != 0;
         bool secure = (key_info & 0x0200) != 0;
         
+        uint64_t replay = 0;
+        if (len >= eapol_offset + 17) {
+            for (int i = 0; i < 8; i++) {
+                replay = (replay << 8) | payload[eapol_offset + 9 + i];
+            }
+        }
+        String replay_str = "  Replay=" + String((unsigned long)replay);
+        
         proto_str = "WPA HS";
-        const char* wpa_ver = (key_desc >= 2) ? "WPA2" : "WPA";
+        uint8_t key_version = key_info & 0x0007;
+        const char* wpa_ver = "WPA2";
+        if (key_version == 3) wpa_ver = "WPA3/PMF";
+        else if (key_version == 1) wpa_ver = "WPA";
+        
         if (ack && !mic) {
             sub_str  = "M1";
-            info_str = String(wpa_ver) + " M1 AP->Cli ANonce";
+            info_str = String(wpa_ver) + " M1 AP->Cli ANonce" + replay_str;
         } else if (!ack && mic && !secure) {
             sub_str  = "M2";
-            info_str = String(wpa_ver) + " M2 Cli->AP SNonce+MIC";
+            info_str = String(wpa_ver) + " M2 Cli->AP SNonce+MIC" + replay_str;
         } else if (ack && mic && install) {
             sub_str  = "M3";
-            info_str = String(wpa_ver) + " M3 AP->Cli GTK Install";
+            info_str = String(wpa_ver) + " M3 AP->Cli GTK Install" + replay_str;
         } else if (!ack && mic && secure) {
             sub_str  = "M4";
-            info_str = String(wpa_ver) + " M4 Cli->AP Done";
+            info_str = String(wpa_ver) + " M4 Cli->AP Done" + replay_str;
         } else {
             sub_str  = "Key";
-            info_str = "EAPOL-Key MIC=" + String(mic ? "Y" : "N") + " ACK=" + String(ack ? "Y" : "N");
+            info_str = "EAPOL-Key MIC=" + String(mic ? "Y" : "N") + " ACK=" + String(ack ? "Y" : "N") + replay_str;
         }
     } else if (packet_type == 1) {
         sub_str  = "Start";
@@ -106,21 +128,70 @@ static void handleEapol(const uint8_t* payload, int len, int llc_offset,
 void dispatchDataFrame(uint8_t fc, const uint8_t* payload, int len, int rssi) {
     s_dataCount++;
     
-    uint8_t subtype = fc & 0xF0;
     // Skip Null/QoS-Null data frames
-    if (subtype == 0x40 || subtype == 0xC0 || subtype == 0x48 || subtype == 0xC8 || 
-        subtype == 0x04 || subtype == 0x0C || subtype == 0x24 || subtype == 0x2C) {
+    uint8_t subtype = (fc >> 4) & 0x0F;
+    if (subtype == 4 || subtype == 12 || subtype == 5 || subtype == 13 || 
+        subtype == 6 || subtype == 14 || subtype == 7 || subtype == 15) {
         return;
     }
 
     bool encrypted = (payload[1] & 0x40) != 0;
+    
+    // Calculate header length correctly
+    // Base is 24 bytes (FC, Dur, Addr1, Addr2, Addr3, Seq)
     int header_len = 24;
-    if ((fc & 0x80) != 0) { // QoS Data
-        header_len = 26;
-    }
+    
+    // Addr4 (6 bytes) if "To DS" and "From DS" both 1
+    if ((payload[1] & 0x03) == 0x03) header_len += 6;
+    
+    // QoS Control (2 bytes) if subtype has bit 3 set (8, 9, 10, 11)
+    if (subtype >= 8) header_len += 2;
+
+    char src_mac[18], dst_mac[18];
+    snprintf(dst_mac, sizeof(dst_mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+             payload[4], payload[5], payload[6], payload[7], payload[8], payload[9]);
+    snprintf(src_mac, sizeof(src_mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+             payload[10], payload[11], payload[12], payload[13], payload[14], payload[15]);
 
     if (encrypted) {
-        // Cannot parse encrypted WPA payloads
+        // Log encrypted frames with visible MAC metadata and QoS hints
+        String info = "Encrypted WPA Data";
+        String subtype_str = "Data";
+        String heuristic = "";
+        
+        // Basic length heuristics
+        if (len < 100) {
+            heuristic = " (Likely TCP ACK or Keep-Alive)";
+        } else if (len > 1200) {
+            heuristic = " (Likely Bulk Transfer / Streaming)";
+        }
+
+        if (subtype >= 8) {
+            // QoS Control field is at header_len - 2
+            uint8_t tid = payload[header_len - 2] & 0x0F;
+            String ac = "Best Effort";
+            if (tid == 1 || tid == 2) { 
+                ac = "Background"; subtype_str = "BK"; 
+                if (len > 1000) heuristic = " (File Download/Update)";
+            }
+            else if (tid == 0 || tid == 3) { 
+                ac = "Best Effort"; subtype_str = "BE"; 
+            }
+            else if (tid == 4 || tid == 5) { 
+                ac = "Video"; subtype_str = "VI"; 
+                if (len > 1000) heuristic = " (Video Streaming)";
+            }
+            else if (tid == 6 || tid == 7) { 
+                ac = "Voice"; subtype_str = "VO"; 
+                if (len > 100 && len < 400) heuristic = " (VoIP/Gaming)";
+            }
+            
+            info += " [QoS: " + ac + " (TID " + String(tid) + ")]";
+        }
+        
+        info += heuristic;
+        
+        addPacketLog("DATA", subtype_str, src_mac, dst_mac, rssi, len, info, nullptr, nullptr, payload, len);
         return;
     }
 
@@ -131,20 +202,22 @@ void dispatchDataFrame(uint8_t fc, const uint8_t* payload, int len, int rssi) {
     if (payload[llc_offset] == 0xAA && payload[llc_offset + 1] == 0xAA && payload[llc_offset + 2] == 0x03) {
         uint16_t ether_type = (payload[llc_offset + 6] << 8) | payload[llc_offset + 7];
         
-        char src_mac[18], dst_mac[18];
-        snprintf(dst_mac, sizeof(dst_mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 payload[4], payload[5], payload[6], payload[7], payload[8], payload[9]);
-        snprintf(src_mac, sizeof(src_mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-                 payload[10], payload[11], payload[12], payload[13], payload[14], payload[15]);
-
         if (ether_type == 0x0806) {
             handleArp(payload, len, llc_offset, src_mac, dst_mac, rssi);
         } else if (ether_type == 0x888E) {
             handleEapol(payload, len, llc_offset, src_mac, dst_mac, rssi);
         } else if (ether_type == 0x0800) {
-            dispatchIPv4Frame(payload, len, llc_offset + 8, llc_offset, src_mac, dst_mac, rssi);
+            // IPv4: IP offset is LLC (8 bytes) after header
+            dispatchIPv4Frame(payload, len, llc_offset + 8, llc_offset + 8, src_mac, dst_mac, rssi);
         } else if (ether_type == 0x86DD) {
+            // IPv6
             dispatchIPv6Frame(payload, len, llc_offset + 8, src_mac, dst_mac, rssi);
+        } else {
+            char eth_hex[5]; snprintf(eth_hex, 5, "%04X", ether_type);
+            addPacketLog("DATA", String("0x")+eth_hex, src_mac, dst_mac, rssi, len, "SNAP Encapsulated Frame", nullptr, nullptr, payload, len);
         }
+    } else {
+        // Non-SNAP data frame
+        addPacketLog("DATA", "LLC", src_mac, dst_mac, rssi, len, "Raw LLC Data Frame", nullptr, nullptr, payload, len);
     }
 }

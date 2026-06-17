@@ -17,6 +17,15 @@ function authHeaders(): HeadersInit {
   };
 }
 
+/** GET /api/info – unauthenticated, returns system info containing ESP MAC address */
+export async function apiGetInfo(): Promise<{ mac: string }> {
+  const res = await fetch(`${BASE}/api/info`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch system info');
+  }
+  return res.json();
+}
+
 /** POST /api/login – returns token on success, throws on failure */
 export async function apiLogin(password: string): Promise<string> {
   const res = await fetch(`${BASE}/api/login`, {
@@ -30,6 +39,17 @@ export async function apiLogin(password: string): Promise<string> {
   }
   return data.token as string;
 }
+
+/** POST /api/led */
+export const setLedConfig = async (mode: string, color?: string, brightness?: number, pin?: number) => {
+  const res = await fetch(`${BASE}/api/led`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ mode, color, brightness, pin }),
+  });
+  if (res.status === 401) { handleUnauthorized(); return null; }
+  return res.json();
+};
 
 /** GET /api/status */
 export async function apiGetStatus() {
@@ -89,12 +109,52 @@ export async function apiSnifferControl(active: boolean, channel?: number, concu
   return res.json();
 }
 
+/** GET /api/sniffer/filters */
+export async function apiGetSnifferFilters() {
+  const res = await fetch(`${BASE}/api/sniffer/filters`, { headers: authHeaders() });
+  if (res.status === 401) { handleUnauthorized(); return null; }
+  return res.json();
+}
+
+/** POST /api/sniffer/filters */
+export async function apiSaveSnifferFilters(whitelist: string[], blacklist: string[]) {
+  const res = await fetch(`${BASE}/api/sniffer/filters`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ whitelist, blacklist }),
+  });
+  if (res.status === 401) { handleUnauthorized(); return null; }
+  return res.json();
+}
+
+/** POST /api/sniffer/owner */
+export async function apiRegisterOwnerMac(mac: string) {
+  const res = await fetch(`${BASE}/api/sniffer/owner`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ mac }),
+  });
+  if (res.status === 401) { handleUnauthorized(); return null; }
+  return res.json();
+}
+
 /** POST /api/wifi */
 export async function apiSaveWiFi(ssid: string, pass: string) {
   const res = await fetch(`${BASE}/api/wifi`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({ ssid, pass }),
+  });
+  if (res.status === 401) { handleUnauthorized(); return null; }
+  return res.json();
+}
+
+/** POST /api/password */
+export async function apiSavePassword(password: string) {
+  const res = await fetch(`${BASE}/api/password`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ password }),
   });
   if (res.status === 401) { handleUnauthorized(); return null; }
   return res.json();

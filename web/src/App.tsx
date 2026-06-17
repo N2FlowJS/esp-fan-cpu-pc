@@ -9,7 +9,7 @@ import { LoginPage } from './components/LoginPage';
 import { useStore } from './store/useStore';
 import { useSSE } from './hooks/useSSE';
 import { PacketLog } from './types';
-import { apiSetMode, apiSetSpeed, apiStep } from './utils/api';
+import { apiSetMode, apiSetSpeed, apiStep, setLedConfig } from './utils/api';
 
 const App = () => {
   const [activeTab, setActiveTab] = useState<'dash' | 'snif' | 'sys'>('dash');
@@ -43,20 +43,27 @@ const App = () => {
     } catch {}
   };
 
+  const handleSetLedConfig = async (mode: string, color?: string, brightness?: number) => {
+    try {
+      await setLedConfig(mode, color, brightness);
+    } catch {}
+  };
+
   return (
-    <div className="min-h-screen bg-bg text-gray-200 selection:bg-accent/30 font-orbitron">
+    <div className="min-h-screen bg-bg text-gray-200 selection:bg-accent/30 font-orbitron pb-10">
       <Header temp={status?.temp} rpm={status?.rpm} isOnline={isOnline} />
       
-      <div className="max-w-lg mx-auto pb-20">
+      <div className={`w-full mx-auto px-4 md:px-6 transition-all duration-500 ease-in-out ${activeTab === 'snif' ? 'max-w-7xl' : 'max-w-2xl'}`}>
         <TabNav activeTab={activeTab} onTabChange={setActiveTab} />
 
-        <main className="px-1">
+        <main className="pb-24">
           {activeTab === 'dash' && (
             <DashboardTab 
               status={status} 
               setMode={setMode} 
               setSpeed={setSpeed} 
               stepSpeed={stepSpeed} 
+              setLedConfig={handleSetLedConfig}
             />
           )}
 

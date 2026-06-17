@@ -2,6 +2,7 @@ import React from 'react';
 import { PacketLog } from '../types';
 import { Search, Copy, X } from 'lucide-react';
 import { getProtoColor, getRssiColor } from '../utils/formatters';
+import { getMacVendor } from '../utils/macLookup';
 
 interface PacketInspectorProps {
   packet: { log: PacketLog, seq: number };
@@ -16,6 +17,13 @@ export const PacketInspector: React.FC<PacketInspectorProps> = ({ packet, onClos
   const handleCopy = () => {
     const text = `[${timeStr}] ${log.proto} | ${log.src} -> ${log.dst} | ${log.rssi}dBm | ${log.info}`;
     navigator.clipboard.writeText(text);
+  };
+
+  const getMacWithVendor = (addr: string) => {
+    if (!addr) return 'N/A';
+    if (!addr.includes(':')) return addr;
+    const vendor = getMacVendor(addr);
+    return vendor ? `${addr} (${vendor})` : addr;
   };
 
   return (
@@ -36,12 +44,15 @@ export const PacketInspector: React.FC<PacketInspectorProps> = ({ packet, onClos
              { l: 'Subtype', v: log.subtype || 'N/A', c: 'text-purple-400 font-bold' },
              { l: 'Channel', v: log.channel !== undefined ? `Ch ${log.channel}` : 'N/A', c: 'text-orange-400 font-bold' },
              
-             { l: log.src.includes(':') ? 'Source MAC' : 'Source IP', v: log.src, c: 'text-cyan-400 font-bold' },
-             ...(log.srcMac && log.srcMac !== log.src ? [{ l: 'Source MAC', v: log.srcMac, c: 'text-cyan-600 font-semibold' }] : []),
+             { l: log.src.includes(':') ? 'Source MAC' : 'Source IP', v: getMacWithVendor(log.src), c: 'text-cyan-400 font-bold' },
+             ...(log.srcPort && log.srcPort > 0 ? [{ l: 'Source Port', v: log.srcPort.toString(), c: 'text-cyan-600 font-semibold' }] : []),
+             ...(log.srcMac && log.srcMac !== log.src ? [{ l: 'Source MAC', v: getMacWithVendor(log.srcMac), c: 'text-cyan-600 font-semibold' }] : []),
              
-             { l: log.dst.includes(':') || log.dst === 'Broadcast' ? 'Dest MAC' : 'Dest IP', v: log.dst, c: 'text-cyan-400 font-bold' },
-             ...(log.dstMac && log.dstMac !== log.dst ? [{ l: 'Dest MAC', v: log.dstMac, c: 'text-cyan-600 font-semibold' }] : []),
+             { l: log.dst.includes(':') || log.dst === 'Broadcast' ? 'Dest MAC' : 'Dest IP', v: getMacWithVendor(log.dst), c: 'text-cyan-400 font-bold' },
+             ...(log.dstPort && log.dstPort > 0 ? [{ l: 'Dest Port', v: log.dstPort.toString(), c: 'text-cyan-600 font-semibold' }] : []),
+             ...(log.dstMac && log.dstMac !== log.dst ? [{ l: 'Dest MAC', v: getMacWithVendor(log.dstMac), c: 'text-cyan-600 font-semibold' }] : []),
              
+             ...(log.ttl && log.ttl > 0 ? [{ l: 'TTL / Hop Limit', v: log.ttl.toString(), c: 'text-yellow-600 font-semibold' }] : []),
              { l: 'Signal', v: `${log.rssi} dBm`, c: getRssiColor(log.rssi) },
              { l: 'Length', v: `${log.len} bytes`, c: 'text-gray-400' },
            ].map((row, i) => (

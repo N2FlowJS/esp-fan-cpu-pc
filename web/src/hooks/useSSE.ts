@@ -1,15 +1,27 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
+import { apiGetStatus } from '../utils/api';
 
 export const useSSE = () => {
-  const { setStatus, setSniffer, addLogs, setIsOnline } = useStore();
+  const { setStatus, setSniffer, addLogs, setIsOnline, isAuthenticated } = useStore();
   const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      setIsOnline(false);
+      return;
+    }
+
     const connect = () => {
       if (eventSourceRef.current) eventSourceRef.current.close();
 
       const token = useStore.getState().token;
+      if (!token) return;
+
       const es = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
       eventSourceRef.current = es;
 
@@ -22,6 +34,12 @@ export const useSSE = () => {
         setIsOnline(false);
         console.error('[SSE] Connection lost, retrying...');
         es.close();
+
+        // Verify if session token has expired or is invalid
+        apiGetStatus().catch((err) => {
+          console.error('[SSE] Auth validation request failed:', err);
+        });
+
         setTimeout(connect, 3000);
       };
 
@@ -61,5 +79,5 @@ export const useSSE = () => {
         eventSourceRef.current = null;
       }
     };
-  }, [setStatus, setSniffer, addLogs, setIsOnline]);
+  }, [setStatus, setSniffer, addLogs, setIsOnline, isAuthenticated]);
 };

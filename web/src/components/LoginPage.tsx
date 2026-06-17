@@ -1,13 +1,25 @@
-import React, { useState } from 'react';
-import { Lock, ShieldCheck, Cpu, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Lock, ShieldCheck, Cpu, Loader2, Eye, EyeOff } from 'lucide-react';
 import { useStore } from '../store/useStore';
-import { apiLogin } from '../utils/api';
+import { apiLogin, apiGetInfo } from '../utils/api';
 
 export const LoginPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [mac, setMac] = useState('');
   const { setAuthenticated, setToken } = useStore();
+
+  useEffect(() => {
+    apiGetInfo()
+      .then(info => {
+        if (info && info.mac) {
+          setMac(info.mac);
+        }
+      })
+      .catch(err => console.error('Failed to fetch ESP MAC address:', err));
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,13 +61,20 @@ export const LoginPage: React.FC = () => {
               <Lock size={18} />
             </div>
             <input
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               placeholder="ACCESS KEY"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
-              className={`w-full bg-surface/50 border ${error ? 'border-red animate-shake' : 'border-white/10'} rounded-2xl py-4 pl-12 pr-4 text-sm font-black text-accent tracking-[0.3em] outline-none focus:border-accent/50 focus:bg-surface transition-all placeholder:text-gray-700`}
+              className={`w-full bg-surface/50 border ${error ? 'border-red animate-shake' : 'border-white/10'} rounded-2xl py-4 pl-12 pr-12 text-sm font-black text-accent tracking-[0.3em] outline-none focus:border-accent/50 focus:bg-surface transition-all placeholder:text-gray-700`}
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-500 hover:text-accent transition-colors focus:outline-none"
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
 
           <button
@@ -65,6 +84,16 @@ export const LoginPage: React.FC = () => {
             <ShieldCheck size={18} /> INITIALIZE SESSION
           </button>
         </form>
+
+        {mac && (
+          <div className="mt-6 p-4 rounded-2xl bg-surface/30 border border-white/5 flex flex-col items-center gap-1 text-center font-mono">
+            <span className="text-[9px] text-gray-500 font-extrabold tracking-widest uppercase">ESP32 MAC Address</span>
+            <span className="text-xs font-black text-accent tracking-wider">{mac}</span>
+            <span className="text-[8px] text-gray-600 font-bold uppercase tracking-tight mt-1">
+              Default Key: last 6 characters ({mac.replace(/:/g, '').toUpperCase().slice(-6)})
+            </span>
+          </div>
+        )}
 
         <p className="text-center text-[10px] text-gray-600 font-bold tracking-widest uppercase mt-8">
           System integrity: <span className="text-green">Verified</span>

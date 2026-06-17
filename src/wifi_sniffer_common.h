@@ -17,9 +17,14 @@ struct SnifferDevice {
     String   ssid;
     int      rssi;
     uint32_t lastSeen;
+    uint32_t packetCount; // Track number of packets from/to this device
     bool     isAP;
     uint8_t  channel;
     String   security;
+    String   wifiGen;
+    int      clients;
+    int      utilization;
+    String   vendor;
 };
 
 struct SnifferPacketLog {
@@ -35,11 +40,17 @@ struct SnifferPacketLog {
     String   srcMac;
     String   dstMac;
     String   rawHex;
+    int      ttl;
+    int      srcPort;
+    int      dstPort;
 };
 
 struct BeaconInfo {
     uint8_t channel;
     String security;
+    String wifiGen;
+    int clients;
+    int utilization;
 };
 
 // ── Global State (defined in wifi_sniffer.cpp) ────────────────────────────────
@@ -66,9 +77,14 @@ extern volatile uint32_t s_eapolCount;
 extern volatile uint32_t s_dnsCount;
 extern volatile uint32_t s_dhcpCount;
 extern volatile uint32_t s_mdnsCount;
+extern volatile uint32_t s_llmnrCount;
+extern volatile uint32_t s_nbnsCount;
+extern volatile uint32_t s_ssdpCount;
+extern volatile uint32_t s_quicCount;
 extern volatile uint32_t s_icmpCount;
 extern volatile uint32_t s_tcpCount;
 extern volatile uint32_t s_udpCount;
+extern volatile uint32_t s_mqttCount;
 extern volatile uint32_t s_rollingDeauthCount;
 
 // ── Core Logging Function ─────────────────────────────────────────────────────
@@ -105,9 +121,20 @@ void handleUdpSsdp(const uint8_t* payload, int len, int pl_off,
                   const char* src_ip, const char* dst_ip, int rssi);
 void handleUdpNtp(const uint8_t* payload, int len, int pl_off,
                  const char* src_ip, const char* dst_ip, int rssi);
+void handleUdpLlmnr(const uint8_t* payload, int len, int pl_off,
+                   const char* src_ip, const char* dst_ip, int rssi);
+void handleUdpNbns(const uint8_t* payload, int len, int pl_off,
+                  const char* src_ip, const char* dst_ip, int rssi);
+void handleUdpWsd(const uint8_t* payload, int len, int pl_off,
+                  const char* src_ip, const char* dst_ip, int rssi);
+void handleUdpCoap(const uint8_t* payload, int len, int pl_off,
+                   const char* src_ip, const char* dst_ip, int rssi);
 String parseTlsSni(const uint8_t* payload, int len);
+String parseTlsServerHello(const uint8_t* payload, int len);
 String parseSSID(const uint8_t* payload, int len, int offset);
 BeaconInfo parseBeaconDetails(const uint8_t* payload, int len);
 bool isRecentlySeen(const uint8_t* mac, bool isAP, int rssi,
-                    const String& ssid = "", uint8_t channel = 0, const String& security = "");
+                    const String& ssid = "", uint8_t channel = 0, const String& security = "",
+                    const String& wifiGen = "", int clients = -1, int util = -1);
+String getMacVendor(const uint8_t* mac);
 

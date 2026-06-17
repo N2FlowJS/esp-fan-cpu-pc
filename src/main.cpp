@@ -6,29 +6,30 @@
 #include "fan_control.h"
 #include "web_server.h"
 #include "wifi_sniffer.h"
+#include "rgb_led.h"
 #include <Preferences.h>
 // ============================================================
 //  ESP32-S3 CPU Fan Controller – Entry Point
-//  Dual WiFi: vừa phát AP (hotspot), vừa kết nối STA (router)
+//  Dual WiFi: AP (hotspot) and STA (router) simultaneous connection
 // ============================================================
 
 static DNSServer s_dns;
-static String    s_staIP = "";   // IP trên mạng STA (nếu kết nối được)
+static String    s_staIP = "";   // IP on STA network (if connected)
 
-// ── Expose STA IP cho web_server.cpp ─────────────────────────
+// ── Expose STA IP to web_server.cpp ─────────────────────────
 const String& getStaIP() { return s_staIP; }
 
 // ─────────────────────────────────────────────────────────────
 static void startWiFi() {
-    // AP + STA đồng thời
+    // AP + STA simultaneously
     WiFi.mode(WIFI_AP_STA);
 
-    // --- 1. Khởi động Access Point ---
+    // --- 1. Start Access Point ---
     IPAddress apIP(192, 168, 4, 1);
     WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
     WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASS);
 
-    // DNS captive portal (chỉ trên AP)
+    // DNS captive portal (AP only)
     s_dns.setTTL(300);
     s_dns.start(53, "*", apIP);
 
@@ -37,7 +38,7 @@ static void startWiFi() {
     Serial.printf("  [AP] Password: %s\n", WIFI_AP_PASS);
     Serial.printf("  [AP] IP      : http://%s\n", WIFI_AP_IP);
 
-    // --- 2. Kết nối vào mạng STA (nếu đã cấu hình) ---
+    // --- 2. Connect to STA network (if configured) ---
     Preferences prefs;
     prefs.begin("wifi", false); // false = read-write (creates namespace if not exists)
     String sta_ssid = "";
@@ -51,10 +52,10 @@ static void startWiFi() {
     prefs.end();
 
     if (sta_ssid.length() > 0) {
-        Serial.printf("  [STA] Kết nối → %s ...\n", sta_ssid.c_str());
+        Serial.printf("  [STA] Connecting → %s ...\n", sta_ssid.c_str());
         WiFi.begin(sta_ssid.c_str(), sta_pass.c_str());
 
-        // Chờ tối đa 10 giây
+        // Wait up to 10 seconds
         uint8_t tries = 0;
         while (WiFi.status() != WL_CONNECTED && tries < 20) {
             delay(500);
@@ -65,15 +66,15 @@ static void startWiFi() {
 
         if (WiFi.status() == WL_CONNECTED) {
             s_staIP = WiFi.localIP().toString();
-            Serial.printf("  [STA] Đã kết nối! IP: http://%s\n", s_staIP.c_str());
-            WiFi.setAutoReconnect(true); // Tự động kết nối lại nếu rớt mạng
+            Serial.printf("  [STA] Connected! IP: http://%s\n", s_staIP.c_str());
+            WiFi.setAutoReconnect(true); // Auto-reconnect if disconnected
         } else {
-            Serial.println("  [STA] Không kết nối được – chỉ dùng AP");
-            WiFi.disconnect(false);   // Không làm ảnh hưởng AP
+            Serial.println("  [STA] Connection failed – AP mode only");
+            WiFi.disconnect(false);   // Don't affect AP
         }
     }
 
-    // --- 3. Khởi động mDNS (esp32-fan.local) ---
+    // --- 3. Start mDNS (esp32-fan.local) ---
     if (MDNS.begin(WIFI_HOSTNAME)) {
         MDNS.addService("http", "tcp", 80);
         Serial.printf("  [DNS] mDNS started: http://%s.local\n", WIFI_HOSTNAME);
@@ -93,7 +94,9 @@ void setup() {
     Serial.println("  ESP32-S3 CPU Fan Controller  v1.0");
     Serial.println("========================================");
 
-    fanSetup(); // Hàm này sẽ tự nạp cấu hình đã lưu từ Flash (mặc định AUTO)
+    randomSeed(micros());
+    ledSetup();
+    fanSetup(); // This function loads saved config from Flash (default AUTO)
     startWiFi();
     webServerSetup();
 
@@ -105,14 +108,28 @@ void loop() {
     fanLoop();
     webServerLoop();
     
-    // --- Xử lý lệnh Serial điều khiển Sniffer ---
+    // --- Handle Serial commands for Sniffer control ---
     if (Serial.available() > 0) {
         String cmd = Serial.readStringUntil('\n');
         cmd.trim();
-        if (cmd.startsWith("sniffer_start")) {
+
+        if (cmd == "pcap_start") {
+            snifferSetPcapSerial(true);
+        } else if (cmd == "pcap_stop") {
+            snifferSetPcapSerial(false);
+            Serial.println("\n[SYS] Exit PCAP mode.");
+        } else if (cmd == "db_sync_start") {
+            snifferSetJsonSerial(true);
+            snifferPrintDevicesJson(); // Initial dump of devices
+            Serial.println("{\"type\":\"sys\",\"msg\":\"DB Sync Started\"}");
+        } else if (cmd == "db_sync_stop") {
+            snifferSetJsonSerial(false);
+            Serial.println("{\"type\":\"sys\",\"msg\":\"DB Sync Stopped\"}");
+        } else if (cmd.startsWith("sniffer_start")) {
+
             String arg = cmd.substring(13);
             arg.trim();
-            uint8_t channel = 0; // Mặc định tự động nhảy kênh
+            uint8_t channel = 0; // Default to auto channel hopping
             bool valid = true;
             if (arg.length() > 0) {
                 if (arg != "hop") {
@@ -122,7 +139,7 @@ void loop() {
                     } else if (val == 0 && arg == "0") {
                         channel = 0;
                     } else {
-                        Serial.println("[ERR] Kenh khong hop le (1-13). Nhap 'sniffer_start [1-13]' hoac 'sniffer_start hop'/'sniffer_start 0' de tu dong nhay kenh.");
+                        Serial.println("[ERR] Invalid channel (1-13). Enter 'sniffer_start [1-13]' or 'sniffer_start hop'/'sniffer_start 0' for auto channel hopping.");
                         valid = false;
                     }
                 }
@@ -134,11 +151,43 @@ void loop() {
             snifferStop();
         } else if (cmd == "sniffer_status" || cmd == "sniffer_stats") {
             snifferPrintStats();
+        } else if (cmd.startsWith("set_password")) {
+            String newPass = cmd.substring(12);
+            newPass.trim();
+            if (newPass.length() >= 4) {
+                Preferences prefs;
+                prefs.begin("sys", false);
+                prefs.putString("webpass", newPass);
+                prefs.end();
+                Serial.printf("[AUTH] Web password updated to: %s\n", newPass.c_str());
+                webServerInvalidateSession();
+            } else {
+                Serial.println("[ERR] Password too short (min 4 chars).");
+            }
+        } else if (cmd == "reset_password") {
+            Preferences prefs;
+            prefs.begin("sys", false);
+            prefs.remove("webpass");
+            prefs.end();
+            Serial.println("[AUTH] Web password reset to default (admin).");
+            webServerInvalidateSession();
+        } else if (cmd.startsWith("set_led_pin")) {
+            String arg = cmd.substring(11);
+            arg.trim();
+            if (arg.length() > 0) {
+                int pin = arg.toInt();
+                ledSetPin(pin);
+            } else {
+                Serial.println("[ERR] Usage: set_led_pin <pin_number>");
+            }
         }
     }
     
-    // Vòng lặp tự động nhảy kênh của Sniffer (nếu đang chạy)
+    // Sniffer auto channel hopping loop (if running)
     snifferLoop();
+    
+    ledLoop();
     
     delay(10);
 }
+

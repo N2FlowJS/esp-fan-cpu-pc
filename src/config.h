@@ -6,16 +6,16 @@
 // ============================================================
 
 // ------------------------------------------------------------
-// WiFi Access Point – ESP32-S3 tự phát WiFi riêng
+// WiFi Access Point – ESP32-S3 creates its own hotspot
 // ------------------------------------------------------------
-#define WIFI_AP_SSID  "ESP32-Fan"   // Tên WiFi phát ra
-#define WIFI_AP_PASS  "12345678"    // Mật khẩu (tối thiểu 8 ký tự)
-#define WIFI_AP_IP    "192.168.4.1" // Địa chỉ IP khi dùng qua AP
+#define WIFI_AP_SSID  "ESP32-Fan"   // Broadcasted SSID
+#define WIFI_AP_PASS  "12345678"    // Password (min 8 characters)
+#define WIFI_AP_IP    "192.168.4.1" // IP address when using AP
 #define WIFI_HOSTNAME "esp32-fan"
 
 // ------------------------------------------------------------
-// WiFi Station – Cấu hình qua giao diện Web
-// Mật khẩu và SSID được lưu trữ trong NVS (Preferences)
+// WiFi Station – Configured via Web interface
+// Password and SSID are stored in NVS (Preferences)
 // ------------------------------------------------------------
 
 // ------------------------------------------------------------
@@ -36,12 +36,12 @@
 
 // ------------------------------------------------------------
 // Internal ESP32-S3 Temperature Sensor
-// Dùng IDF driver: driver/temperature_sensor.h
-// Không cần GPIO hay linh kiện ngoài.
-// Đo nhiệt độ chip (±2°C, phản ánh tải xử lý của ESP32-S3).
+// Uses IDF driver: driver/temperature_sensor.h
+// No GPIO or external components required.
+// Measures chip temperature (±2°C, reflects ESP32-S3 processing load).
 // ------------------------------------------------------------
-#define TEMP_READ_INTERVAL_MS 2000   // Đọc nhiệt độ mỗi 2 giây
-// Offset hiệu chỉnh (°C) – chỉnh nếu đọc lệch so với thực tế
+#define TEMP_READ_INTERVAL_MS 2000   // Read temperature every 2 seconds
+// Calibration offset (°C) – adjust if reading differs from reality
 #define TEMP_OFFSET_C      0.0f
 
 // ------------------------------------------------------------

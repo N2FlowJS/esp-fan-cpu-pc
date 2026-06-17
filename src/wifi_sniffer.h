@@ -3,49 +3,89 @@
 #include <ArduinoJson.h>
 
 /**
- * @brief Kiểm tra xem Sniffer có đang hoạt động hay không.
+ * @brief Check if the Sniffer is currently active.
  */
 bool snifferIsActive();
 
 /**
- * @brief Kiểm tra xem Sniffer có đang ở chế độ nhảy kênh hay không.
+ * @brief Check if the Sniffer is in channel hopping mode.
  */
 bool snifferIsHopping();
 
 /**
- * @brief Lấy kênh đang quét hiện tại.
+ * @brief Get the current scanning channel.
  */
 uint8_t snifferGetChannel();
 
 /**
- * @brief Bắt đầu chế độ Sniffer.
- *        @param channel Kênh bắt đầu (1-13). Nếu = 0 và concurrent = false, sẽ tự động nhảy kênh.
- *        @param concurrent Nếu true, sẽ quét đồng thời trên kênh Wi-Fi hiện tại mà không ngắt Web Server.
+ * @brief Start Sniffer mode.
+ *        @param channel Start channel (1-13). If = 0 and concurrent = false, it will auto-hop channels.
+ *        @param concurrent If true, sniff concurrently on the current Wi-Fi channel without interrupting the Web Server.
  */
 void snifferStart(uint8_t channel = 0, bool concurrent = false);
 
 /**
- * @brief Dừng chế độ Sniffer.
+ * @brief Stop Sniffer mode.
  */
 void snifferStop();
 
 /**
- * @brief Chuyển kênh Wi-Fi (1-13).
+ * @brief Switch Wi-Fi channel (1-13).
  */
 void snifferSetChannel(uint8_t channel);
 
 /**
- * @brief In thống kê các gói tin đã quét và các thiết bị phát hiện được ra Serial.
+ * @brief Print statistics of scanned packets and detected devices to Serial.
  */
 void snifferPrintStats();
 
 /**
- * @brief Điền dữ liệu thống kê và danh sách thiết bị quét được vào JSON Document.
+ * @brief Fill statistics data and detected device list into a JSON Document.
  */
 void snifferGetStatsJson(JsonDocument& doc);
 
 /**
- * @brief Cần gọi hàm này trong vòng lặp loop() chính.
- *        Thực hiện nhảy kênh (Channel Hopping) tự động nếu được kích hoạt.
+ * @brief Get Whitelist/Blacklist as a JSON object.
+ */
+void snifferGetFilterConfig(JsonDocument& doc);
+
+/**
+ * @brief Update Whitelist/Blacklist.
+ * @param whitelist String containing comma or newline separated MACs.
+ * @param blacklist String containing comma or newline separated MACs.
+ */
+void snifferSetFilterConfig(const String& whitelist, const String& blacklist);
+
+/**
+ * @brief Add a temporary MAC address to the exclusion list (e.g., MAC of the connecting browser).
+ * These MACs will be removed from the log stream to avoid noise.
+ * @param mac MAC string in "XX:XX:XX:XX:XX:XX" format.
+ */
+void snifferAddOwnerMac(const String& mac);
+
+/**
+ * @brief Enable/disable Raw Binary PCAP Streaming mode over Serial.
+ * When enabled, text logs are disabled to avoid corrupting the PCAP file structure.
+ */
+void snifferSetPcapSerial(bool enable);
+
+/**
+ * @brief Enable/disable JSON data transmission over Serial for database storage.
+ */
+void snifferSetJsonSerial(bool enable);
+
+/**
+ * @brief Print current device list to Serial as JSON.
+ */
+void snifferPrintDevicesJson();
+
+/**
+ * @brief Check if PCAP serial transmission mode is enabled.
+ */
+bool snifferIsPcapSerialActive();
+
+/**
+ * @brief Call this function in the main loop().
+ *        Performs automatic channel hopping if enabled.
  */
 void snifferLoop();

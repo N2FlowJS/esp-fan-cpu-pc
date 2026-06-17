@@ -1,3 +1,7 @@
+# For IDE linter compatibility
+Import = globals().get("Import")
+env = globals().get("env")
+
 Import("env")
 
 # Optional: Add git commit hash as build flag

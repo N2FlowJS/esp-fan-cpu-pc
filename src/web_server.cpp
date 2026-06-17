@@ -9,6 +9,7 @@
 #include <vector>
 #include <algorithm>
 #include "wifi_sniffer.h"
+#include "rgb_led.h"
 
 // Declare external function from main.cpp
 extern const String& getStaIP();
@@ -22,10 +23,20 @@ static AsyncEventSource s_events("/api/events");
 static String           s_sessionToken = "";
 static bool             s_shouldReboot = false;
 static uint32_t         s_rebootTime = 0;
+static String           s_savedSSID = "";
+static String           s_savedPass = "";
+
+static String getDefaultPassword() {
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+    char buf[7];
+    snprintf(buf, sizeof(buf), "%02X%02X%02X", mac[3], mac[4], mac[5]);
+    return String(buf);
+}
 
 /**
  * generateRandomToken
- * Tạo một chuỗi ngẫu nhiên làm Session Token
+ * Generate a random string as Session Token
  */
 static void generateRandomToken() {
     char buf[17];
@@ -35,15 +46,32 @@ static void generateRandomToken() {
     }
     buf[16] = '\0';
     s_sessionToken = String(buf);
+    
+    Preferences prefs;
+    prefs.begin("sys", true);
+    String activePass = prefs.getString("webpass", "");
+    prefs.end();
+    if (activePass.length() == 0) {
+        activePass = getDefaultPassword();
+    }
+    
     Serial.println("========================================");
-    Serial.print("  [AUTH] New Session Token: ");
-    Serial.println(s_sessionToken);
+    Serial.println("  [AUTH] Session Initialized");
+    Serial.printf ("  [AUTH] Active Password: %s\n", activePass.c_str());
+    Serial.printf ("  [AUTH] Token (internal): %s\n", s_sessionToken.c_str());
     Serial.println("========================================");
 }
 
+void webServerInvalidateSession() {
+    generateRandomToken();
+    s_events.close();
+    Serial.println("[AUTH] Active sessions invalidated.");
+}
+
+
 /**
  * isReqAuth
- * Kiểm tra xem request có token hợp lệ hay không
+ * Check if the request has a valid token
  */
 static bool isReqAuth(AsyncWebServerRequest* req) {
     if (req->hasHeader("X-Token")) {
@@ -59,7 +87,43 @@ void webServerBroadcast(const char* event, const char* data) {
     s_events.send(data, event, millis());
 }
 
-void webServerBroadcastLog(const String& proto, const String& subtype, const String& src, const String& dst, int rssi, int len, const String& info, uint8_t channel, const String& srcMac, const String& dstMac, const String& rawHex) {
+static void broadcastStatus() {
+    JsonDocument doc;
+    doc["rpm"]   = fanGetRPM();
+    doc["temp"]  = round(fanGetTemp() * 10.0f) / 10.0f;
+    doc["speed"] = fanGetSpeedPct();
+    doc["mode"]  = (fanGetMode() == FanMode::AUTO) ? "auto" : "manual";
+    doc["uptime"] = millis() / 1000;
+    doc["freeHeap"] = ESP.getFreeHeap();
+    doc["totalHeap"] = ESP.getHeapSize();
+    doc["freePsram"] = ESP.getFreePsram();
+    doc["totalPsram"] = ESP.getPsramSize();
+    doc["chip"] = ESP.getChipModel();
+    doc["cpu"] = ESP.getCpuFreqMHz();
+    doc["flash"] = ESP.getFlashChipSize();
+    doc["sdk"] = ESP.getSdkVersion();
+    doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
+    doc["staIP"] = WiFi.localIP().toString();
+    String activeSSID = WiFi.SSID();
+    if (activeSSID.length() == 0 && s_savedSSID.length() > 0) {
+        activeSSID = s_savedSSID;
+    }
+    doc["staSSID"] = activeSSID;
+    doc["staPass"] = s_savedPass;
+
+    doc["ledMode"] = s_ledIsAuto ? "auto" : "manual";
+    doc["ledBrightness"] = s_ledBrightness;
+    doc["ledPin"] = s_ledPin;
+    char colorHex[8];
+    snprintf(colorHex, sizeof(colorHex), "#%06X", s_ledManualColor & 0xFFFFFF);
+    doc["ledColor"] = String(colorHex);
+
+    String json;
+    serializeJson(doc, json);
+    webServerBroadcast("status", json.c_str());
+}
+
+void webServerBroadcastLog(const String& proto, const String& subtype, const String& src, const String& dst, int rssi, int len, const String& info, uint8_t channel, const String& srcMac, const String& dstMac, const String& rawHex, int ttl, int srcPort, int dstPort) {
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
     JsonObject obj = arr.add<JsonObject>();
@@ -74,6 +138,9 @@ void webServerBroadcastLog(const String& proto, const String& subtype, const Str
     obj["srcMac"] = srcMac;
     obj["dstMac"] = dstMac;
     obj["rawHex"] = rawHex;
+    obj["ttl"] = ttl;
+    obj["srcPort"] = srcPort;
+    obj["dstPort"] = dstPort;
     obj["time"] = (double)millis() / 1000.0;
     
     String json;
@@ -105,9 +172,21 @@ static void handleGetStatus(AsyncWebServerRequest* req) {
     doc["spiffsTotal"] = LittleFS.totalBytes();
     doc["spiffsUsed"]  = LittleFS.usedBytes();
     doc["staIP"]   = WiFi.localIP().toString();
-    doc["staSSID"] = WiFi.SSID();
+    String activeSSID = WiFi.SSID();
+    if (activeSSID.length() == 0 && s_savedSSID.length() > 0) {
+        activeSSID = s_savedSSID;
+    }
+    doc["staSSID"] = activeSSID;
+    doc["staPass"] = s_savedPass;
     doc["rssi"]    = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
     doc["sdk"]     = ESP.getSdkVersion();
+
+    doc["ledMode"] = s_ledIsAuto ? "auto" : "manual";
+    doc["ledBrightness"] = s_ledBrightness;
+    doc["ledPin"] = s_ledPin;
+    char colorHex[8];
+    snprintf(colorHex, sizeof(colorHex), "#%06X", s_ledManualColor & 0xFFFFFF);
+    doc["ledColor"] = String(colorHex);
 
     String json;
     serializeJson(doc, json);
@@ -124,9 +203,35 @@ void webServerSetup() {
         return;
     }
 
+    // Initialize default password in preferences if not present,
+    // or if it is set to "admin" (the old insecure default).
+    Preferences prefs;
+    prefs.begin("sys", false);
+    bool shouldReset = !prefs.isKey("webpass");
+    if (prefs.isKey("webpass")) {
+        String currentPass = prefs.getString("webpass", "");
+        if (currentPass == "admin") {
+            shouldReset = true;
+        }
+    }
+    if (shouldReset) {
+        prefs.putString("webpass", getDefaultPassword());
+    }
+    prefs.end();
+
+    Preferences wifiPrefs;
+    wifiPrefs.begin("wifi", true);
+    s_savedSSID = wifiPrefs.getString("ssid", "");
+    s_savedPass = wifiPrefs.getString("pass", "");
+    wifiPrefs.end();
+
     generateRandomToken();
 
+    s_events.authorizeConnect([](AsyncWebServerRequest* request) {
+        return isReqAuth(request);
+    });
     s_server.addHandler(&s_events);
+
 
     // --- Captive Portal handlers ---
     s_server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* req) { req->redirect("http://192.168.4.1/"); });
@@ -137,18 +242,41 @@ void webServerSetup() {
 
     // --- API ---
 
+    s_server.on("/api/info", HTTP_GET, [](AsyncWebServerRequest* req) {
+        JsonDocument doc;
+        doc["mac"] = WiFi.macAddress();
+        String json;
+        serializeJson(doc, json);
+        req->send(200, "application/json", json);
+    });
+
     s_server.on(
         "/api/login", HTTP_POST,
         [](AsyncWebServerRequest* req) {},
         nullptr,
         [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
             JsonDocument doc;
-            deserializeJson(doc, data, len);
+            DeserializationError err = deserializeJson(doc, data, len);
+            if (err) {
+                req->send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid JSON\"}");
+                return;
+            }
+            
             String pass = doc["password"] | "";
 
             Preferences prefs;
             prefs.begin("sys", false);
-            String storedPass = prefs.getString("webpass", "admin");
+            String storedPass = getDefaultPassword();
+            if (prefs.isKey("webpass")) {
+                storedPass = prefs.getString("webpass", storedPass);
+                if (storedPass == "admin") {
+                    storedPass = getDefaultPassword();
+                    prefs.putString("webpass", storedPass);
+                }
+            } else {
+                // Initialize default if not found to avoid future errors
+                prefs.putString("webpass", storedPass);
+            }
             prefs.end();
 
             if (pass == storedPass) {
@@ -156,13 +284,96 @@ void webServerSetup() {
                 String resp = "{\"ok\":true,\"token\":\"" + s_sessionToken + "\"}";
                 req->send(200, "application/json", resp);
             } else {
-                Serial.printf("[AUTH] Password mismatch! Received: '%s', Stored: '%s'\n", pass.c_str(), storedPass.c_str());
+                Serial.printf("[AUTH] Password mismatch! Received len: %d, Stored len: %d\n", pass.length(), storedPass.length());
+                Serial.printf("[AUTH] Hint: Received: '%s', Stored: '%s'\n", pass.c_str(), storedPass.c_str());
                 req->send(401, "application/json", "{\"ok\":false,\"error\":\"Invalid Key\"}");
             }
         }
     );
 
-    s_server.on("/api/status", HTTP_GET, handleGetStatus);
+    s_server.on(
+        "/api/password", HTTP_POST,
+        [](AsyncWebServerRequest* req) { if (!isReqAuth(req)) req->send(401); },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+            if (!isReqAuth(req)) return;
+            JsonDocument doc;
+            deserializeJson(doc, data, len);
+            String newPass = doc["password"] | "";
+
+            if (newPass.length() >= 4) {
+                Preferences prefs;
+                prefs.begin("sys", false);
+                prefs.putString("webpass", newPass);
+                prefs.end();
+
+                req->send(200, "application/json", "{\"ok\":true}");
+                Serial.println("[AUTH] Web password updated via API.");
+                webServerInvalidateSession();
+            } else {
+                req->send(400, "application/json", "{\"ok\":false,\"error\":\"Password too short (min 4 chars)\"}");
+            }
+        }
+    );
+
+
+    s_server.on("/api/status", handleGetStatus);
+
+    s_server.on("/api/sniffer/filters", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (!isReqAuth(req)) { req->send(401); return; }
+        JsonDocument doc;
+        snifferGetFilterConfig(doc);
+        String json;
+        serializeJson(doc, json);
+        req->send(200, "application/json", json);
+    });
+
+    s_server.on(
+        "/api/sniffer/filters", HTTP_POST,
+        [](AsyncWebServerRequest* req) { if (!isReqAuth(req)) req->send(401); },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+            if (!isReqAuth(req)) return;
+            JsonDocument doc;
+            deserializeJson(doc, data, len);
+
+            String wl = "";
+            if (doc["whitelist"].is<JsonArray>()) {
+                JsonArray wlArr = doc["whitelist"].as<JsonArray>();
+                for (JsonVariant v : wlArr) {
+                    if (wl.length() > 0) wl += ",";
+                    wl += v.as<String>();
+                }
+            }
+
+            String bl = "";
+            if (doc["blacklist"].is<JsonArray>()) {
+                JsonArray blArr = doc["blacklist"].as<JsonArray>();
+                for (JsonVariant v : blArr) {
+                    if (bl.length() > 0) bl += ",";
+                    bl += v.as<String>();
+                }
+            }
+
+            snifferSetFilterConfig(wl, bl);
+            req->send(200, "application/json", "{\"ok\":true}");
+        }
+    );
+
+    s_server.on(
+        "/api/sniffer/owner", HTTP_POST,
+        [](AsyncWebServerRequest* req) { if (!isReqAuth(req)) req->send(401); },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+            if (!isReqAuth(req)) return;
+            JsonDocument doc;
+            deserializeJson(doc, data, len);
+            if (doc["mac"].is<String>()) {
+                snifferAddOwnerMac(doc["mac"].as<String>());
+            }
+            req->send(200, "application/json", "{\"ok\":true}");
+        }
+    );
 
     s_server.on(
         "/api/wifi", HTTP_POST,
@@ -181,6 +392,9 @@ void webServerSetup() {
                 prefs.putString("ssid", ssid);
                 prefs.putString("pass", pass);
                 prefs.end();
+
+                s_savedSSID = ssid;
+                s_savedPass = pass;
 
                 req->send(200, "application/json", "{\"ok\":true}");
 
@@ -204,6 +418,7 @@ void webServerSetup() {
             fanSetSpeed(static_cast<uint8_t>(constrain(speed, 0, 100)));
             fanSetMode(FanMode::MANUAL);
             req->send(200, "application/json", "{\"ok\":true}");
+            broadcastStatus();
         }
     );
 
@@ -221,6 +436,7 @@ void webServerSetup() {
             fanSetSpeed(static_cast<uint8_t>(newPct));
             fanSetMode(FanMode::MANUAL);
             req->send(200, "application/json", "{\"ok\":true,\"speed\":" + String(newPct) + "}");
+            broadcastStatus();
         }
     );
 
@@ -236,6 +452,45 @@ void webServerSetup() {
             if (mode == "auto") fanSetMode(FanMode::AUTO);
             else if (mode == "manual") fanSetMode(FanMode::MANUAL);
             req->send(200, "application/json", "{\"ok\":true}");
+            broadcastStatus();
+        }
+    );
+
+    s_server.on(
+        "/api/led", HTTP_POST,
+        [](AsyncWebServerRequest* req) { if (!isReqAuth(req)) req->send(401); },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+            if (!isReqAuth(req)) return;
+            JsonDocument doc;
+            deserializeJson(doc, data, len);
+            String mode = doc["mode"] | "";
+            if (mode == "auto") {
+                ledSetMode(true);
+            } else if (mode == "manual") {
+                ledSetMode(false);
+                String colorStr = doc["color"] | "";
+                if (colorStr.startsWith("#") && colorStr.length() == 7) {
+                    long color = strtol(colorStr.c_str() + 1, NULL, 16);
+                    uint8_t r = (color >> 16) & 0xFF;
+                    uint8_t g = (color >> 8) & 0xFF;
+                    uint8_t b = color & 0xFF;
+                    ledSetManualColor(r, g, b);
+                }
+            }
+            
+            if (!doc["brightness"].is<JsonArray>() && !doc["brightness"].is<JsonObject>() && !doc["brightness"].isNull()) {
+                int b = doc["brightness"] | 128;
+                ledSetBrightness(constrain(b, 0, 255));
+            }
+            
+            if (!doc["pin"].is<JsonArray>() && !doc["pin"].is<JsonObject>() && !doc["pin"].isNull()) {
+                int pin = doc["pin"] | 48;
+                ledSetPin(pin);
+            }
+
+            req->send(200, "application/json", "{\"ok\":true}");
+            broadcastStatus();
         }
     );
 
@@ -274,13 +529,6 @@ void webServerSetup() {
         req->send(resp);
     });
 
-    // workbox runtime – also no-cache so updates propagate
-    s_server.on("/workbox-9c191d2f.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-        AsyncWebServerResponse* resp = req->beginResponse(LittleFS, "/workbox-9c191d2f.js", "application/javascript");
-        resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-        req->send(resp);
-    });
-
     // registerSW.js
     s_server.on("/registerSW.js", HTTP_GET, [](AsyncWebServerRequest* req) {
         AsyncWebServerResponse* resp = req->beginResponse(LittleFS, "/registerSW.js", "application/javascript");
@@ -289,11 +537,17 @@ void webServerSetup() {
     });
 
     // Web App Manifest
-    s_server.on("/manifest.webmanifest", HTTP_GET, [](AsyncWebServerRequest* req) {
-        AsyncWebServerResponse* resp = req->beginResponse(LittleFS, "/manifest.webmanifest", "application/manifest+json");
-        resp->addHeader("Cache-Control", "no-store");
-        req->send(resp);
-    });
+    auto manifestHandler = [](AsyncWebServerRequest* req) {
+        if (LittleFS.exists("/manifest.webmanifest")) {
+            AsyncWebServerResponse* resp = req->beginResponse(LittleFS, "/manifest.webmanifest", "application/json");
+            resp->addHeader("Access-Control-Allow-Origin", "*");
+            req->send(resp);
+        } else {
+            req->send(404, "text/plain", "Manifest not found");
+        }
+    };
+    s_server.on("/manifest.webmanifest", HTTP_GET, manifestHandler);
+    s_server.on("/manifest.json", HTTP_GET, manifestHandler);
 
     // PWA icons
     s_server.on("/pwa-192x192.png", HTTP_GET, [](AsyncWebServerRequest* req) {
@@ -309,7 +563,8 @@ void webServerSetup() {
         req->send(LittleFS, "/favicon.ico", "image/x-icon");
     });
 
-    // --- Static assets (index.html, style.css, …) ---
+    // --- Static assets (index.html, style.css, ...) ---
+    // Moved below specific handlers to avoid shadowing
     s_server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
     // --- 404 / SPA fallback ---
@@ -317,11 +572,31 @@ void webServerSetup() {
     // All other paths → serve index.html so the SPA router handles them
     s_server.onNotFound([](AsyncWebServerRequest* req) {
         const String& url = req->url();
+        
+        // Handle workbox with hash (e.g. /workbox-9c191d2f.js)
+        if (url.startsWith("/workbox-") && url.endsWith(".js")) {
+            if (LittleFS.exists(url)) {
+                AsyncWebServerResponse* resp = req->beginResponse(LittleFS, url, "application/javascript");
+                resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+                req->send(resp);
+                return;
+            }
+        }
+
         // Captive portal probes & missing API calls → redirect
         if (url.startsWith("/api/") || url == "/generate_204" || url == "/gen_204") {
             req->redirect("http://192.168.4.1/");
             return;
         }
+
+        // Return 404 for missing static files (URLs with file extensions) instead of falling back to index.html
+        int lastSlash = url.lastIndexOf('/');
+        int lastDot = url.lastIndexOf('.');
+        if (lastDot > lastSlash) {
+            req->send(404, "text/plain", "Not Found");
+            return;
+        }
+
         // SPA fallback: send index.html for any unmatched route
         if (LittleFS.exists("/index.html")) {
             req->send(LittleFS, "/index.html", "text/html");
@@ -347,20 +622,7 @@ void webServerLoop() {
 
     if (millis() - s_lastBroadcast >= 1000) {
         s_lastBroadcast = millis();
-        
-        JsonDocument doc;
-        doc["rpm"]   = fanGetRPM();
-        doc["temp"]  = round(fanGetTemp() * 10.0f) / 10.0f;
-        doc["speed"] = fanGetSpeedPct();
-        doc["mode"]  = (fanGetMode() == FanMode::AUTO) ? "auto" : "manual";
-        doc["uptime"] = millis() / 1000;
-        doc["freeHeap"] = ESP.getFreeHeap();
-        doc["rssi"] = (WiFi.status() == WL_CONNECTED) ? WiFi.RSSI() : 0;
-        doc["staIP"] = WiFi.localIP().toString();
-
-        String json;
-        serializeJson(doc, json);
-        webServerBroadcast("status", json.c_str());
+        broadcastStatus();
 
         if (snifferIsActive()) {
             JsonDocument snifDoc;
@@ -370,5 +632,8 @@ void webServerLoop() {
             serializeJson(snifDoc, snifJson);
             webServerBroadcast("sniffer", snifJson.c_str());
         }
+    }
+}
+      }
     }
 }

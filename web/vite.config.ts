@@ -10,7 +10,11 @@ export default defineConfig({
     viteSingleFile(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+      injectRegister: 'script',
+      devOptions: {
+        enabled: true
+      },
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
         name: 'ESP32 Fan & Sniffer',
         short_name: 'FanSniffer',
@@ -18,16 +22,27 @@ export default defineConfig({
         theme_color: '#0a0c12',
         background_color: '#0a0c12',
         display: 'standalone',
+        scope: './',
+        start_url: './',
+        id: './',
         icons: [
           {
             src: 'pwa-192x192.png',
             sizes: '192x192',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
           },
           {
             src: 'pwa-512x512.png',
             sizes: '512x512',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
           }
         ]
       }
