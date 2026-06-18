@@ -87,9 +87,9 @@ void snifferGetFilterConfig(JsonDocument& doc) {
     for (const auto& m : s_whitelist) wl.push_back(bytesToMacString(m.data()));
     for (const auto& m : s_blacklist) bl.push_back(bytesToMacString(m.data()));
 
-    JsonArray arrW = doc.createNestedArray("whitelist");
+    JsonArray arrW = doc["whitelist"].to<JsonArray>();
     for (const auto& s : wl) arrW.add(s);
-    JsonArray arrB = doc.createNestedArray("blacklist");
+    JsonArray arrB = doc["blacklist"].to<JsonArray>();
     for (const auto& s : bl) arrB.add(s);
 }
 

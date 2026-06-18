@@ -183,9 +183,9 @@ void addPacketLog(const String& proto, const String& subtype,
 
     if (s_jsonSerialActive && !s_pcapSerialActive) {
         if (!Serial) { s_jsonSerialActive = false; return; }
-        DynamicJsonDocument doc(1024);
+        JsonDocument doc;
         doc["type"] = "packet";
-        JsonObject obj = doc.createNestedObject("data");
+        JsonObject obj = doc["data"].to<JsonObject>();
         obj["proto"] = proto;
         obj["subtype"] = subtype;
         obj["src"] = src;

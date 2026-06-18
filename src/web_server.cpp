@@ -682,12 +682,12 @@ void webServerSetup() {
                 }
             }
             
-            if (doc.containsKey("brightness")) {
+            if (doc["brightness"].is<JsonVariant>()) {
                 int b = doc["brightness"].as<int>();
                 ledSetBrightness(constrain(b, 0, 255));
             }
             
-            if (doc.containsKey("pin")) {
+            if (doc["pin"].is<JsonVariant>()) {
                 int pin = doc["pin"].as<int>();
                 if (pin > 0) ledSetPin(pin);
             }
