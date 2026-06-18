@@ -1,0 +1,6 @@
+pyserial==3.5
+customtkinter==5.2.2
+psutil
+requests
+WMI; platform_system=="Windows"
+pypiwin32
