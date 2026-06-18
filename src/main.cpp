@@ -210,6 +210,18 @@ void loop() {
             } else {
                 Serial.println("[ERR] Usage: set_led_pin <pin_number>");
             }
+        } else if (cmd.startsWith("set_led_color")) {
+            // Usage: set_led_color R G B (e.g. set_led_color 255 0 0)
+            String arg = cmd.substring(13);
+            arg.trim();
+            int r, g, b;
+            if (sscanf(arg.c_str(), "%d %d %d", &r, &g, &b) == 3) {
+                ledSetMode(false); // Switch to manual
+                ledSetManualColor(r, g, b);
+                Serial.printf("[LED] Manual color set to: R=%d, G=%d, B=%d\n", r, g, b);
+            } else {
+                Serial.println("[ERR] Usage: set_led_color <R> <G> <B>");
+            }
         }
     }
     

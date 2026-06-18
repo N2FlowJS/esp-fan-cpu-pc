@@ -328,7 +328,7 @@ void snifferStart(uint8_t channel, bool concurrent) {
         esp_wifi_set_promiscuous_rx_cb(wifi_promiscuous_rx_cb);
 
         wifi_promiscuous_filter_t filter;
-        // Use ALL to ensure we don't miss any frame types
+        // Use specific masks instead of ALL (0xFFFFFFFF) to avoid "unsupport frame type" log spam on S3
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_ALL;
         esp_wifi_set_promiscuous_filter(&filter);
 

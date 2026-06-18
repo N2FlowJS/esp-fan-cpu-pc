@@ -682,14 +682,14 @@ void webServerSetup() {
                 }
             }
             
-            if (!doc["brightness"].is<JsonArray>() && !doc["brightness"].is<JsonObject>() && !doc["brightness"].isNull()) {
-                int b = doc["brightness"] | 128;
+            if (doc.containsKey("brightness")) {
+                int b = doc["brightness"].as<int>();
                 ledSetBrightness(constrain(b, 0, 255));
             }
             
-            if (!doc["pin"].is<JsonArray>() && !doc["pin"].is<JsonObject>() && !doc["pin"].isNull()) {
-                int pin = doc["pin"] | 48;
-                ledSetPin(pin);
+            if (doc.containsKey("pin")) {
+                int pin = doc["pin"].as<int>();
+                if (pin > 0) ledSetPin(pin);
             }
 
             req->send(200, "application/json", "{\"ok\":true}");

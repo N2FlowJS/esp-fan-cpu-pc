@@ -27,7 +27,7 @@ const OUI_MAP: { [key: string]: string } = {
   'C0:49:EF': 'Espressif', 'C4:4F:33': 'Espressif', 'C4:DD:57': 'Espressif', 'C8:2E:18': 'Espressif', 'C8:C9:A3': 'Espressif',
   'CC:50:E3': 'Espressif', 'D4:D4:DA': 'Espressif', 'D8:A0:1D': 'Espressif', 'D8:BF:C0': 'Espressif', 'D8:F1:5B': 'Espressif',
   'DC:4F:22': 'Espressif', 'E0:5A:1B': 'Espressif', 'E0:E2:E6': 'Espressif', 'E8:68:E7': 'Espressif', 'EC:FA:BC': 'Espressif',
-  'F0:08:D1': 'Espressif', 'F4:CF:A2': 'Espressif', '34:85:18': 'Espressif',
+  'F0:08:D1': 'Espressif', 'F4:CF:A2': 'Espressif', '34:85:18': 'Espressif', "84:F7:03": "Espressif", 'E4:B0:63': "Espressif",
 
   // Google
   '00:1A:11': 'Google', '3C:5A:B4': 'Google', '54:60:09': 'Google', '70:5A:0F': 'Google', '80:D8:1A': 'Google',
@@ -104,11 +104,38 @@ const OUI_MAP: { [key: string]: string } = {
   '00:1A:2B': 'Airespace', '00:11:88': 'Brocade',
   '70:B3:D5': 'Linksys', '00:06:25': 'Linksys', '00:0C:41': 'Linksys', '00:0F:66': 'Linksys',
   '00:14:BF': 'Linksys', '00:16:B6': 'Linksys', '00:18:39': 'Linksys', '00:1A:70': 'Linksys',
+
+  // Amazon (Echo, Kindle, FireTV)
+  '00:BB:3A': 'Amazon', '50:DC:E7': 'Amazon', 'AC:63:BE': 'Amazon', 'F0:D2:F1': 'Amazon', 'FC:A6:67': 'Amazon', 'FC:A1:83': 'Amazon',
+
+  // LG Electronics
+  '00:1C:62': 'LG Electronics', '00:E0:91': 'LG Electronics', '3C:BD:D8': 'LG Electronics', '64:99:5D': 'LG Electronics', 'A8:23:FE': 'LG Electronics',
+
+  // Roku
+  '08:05:81': 'Roku', 'B0:A7:37': 'Roku', 'CC:6D:10': 'Roku', 'D4:35:1D': 'Roku',
+
+  // Nintendo
+  '00:1F:32': 'Nintendo', '00:21:47': 'Nintendo', '00:24:1E': 'Nintendo', '94:58:CB': 'Nintendo', 'E0:E7:51': 'Nintendo',
+
+  // Sonos
+  '00:0E:58': 'Sonos', '5C:AA:FD': 'Sonos', '94:9F:3E': 'Sonos', 'B8:E9:37': 'Sonos',
 };
 
 export const getMacVendor = (mac: string): string => {
-  if (!mac || mac.length < 8) return '';
-  const cleanMac = mac.trim().toUpperCase().replace(/-/g, ':');
+  if (!mac || mac.length < 2) return "";
+  const cleanMac = mac.trim().toUpperCase().replace(/-/g, ":");
+
+  // Check for special MAC types using the first byte
+  const firstByte = parseInt(cleanMac.substring(0, 2), 16);
+  if (!isNaN(firstByte)) {
+    if (cleanMac === "FF:FF:FF:FF:FF:FF") return "Broadcast";
+    // Check Multicast bit (Least Significant Bit of first byte)
+    if (firstByte & 0x01) return "Multicast";
+    // Check Local Admin / Randomized bit (Second Least Significant Bit of first byte)
+    if (firstByte & 0x02) return "Randomized MAC";
+  }
+
+  if (mac.length < 8) return "";
   const oui = cleanMac.slice(0, 8);
-  return OUI_MAP[oui] || '';
+  return OUI_MAP[oui] || "";
 };

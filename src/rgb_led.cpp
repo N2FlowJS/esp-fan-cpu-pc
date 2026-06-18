@@ -6,7 +6,7 @@
 #define NUM_LEDS 1
 
 static std::mutex s_ledMutex;
-int s_ledPin = 48; // Default to standard ESP32-S3 RGB pin
+int s_ledPin = 38; // Reverted back to 38
 Adafruit_NeoPixel strip(NUM_LEDS, s_ledPin, NEO_GRB + NEO_KHZ800);
 
 const uint32_t LED_COLOR_NORMAL = 0x00FF00;   // Green
@@ -99,22 +99,33 @@ void ledSetPin(int pin) {
 }
 
 void ledSetup() {
+    delay(50); // Give the NeoPixel internal controller time to power up and stabilize
+    
     Preferences prefs;
     prefs.begin("sys", true);
-    s_ledPin = prefs.getInt("ledpin", 48); // Changed default to 48 (ESP32-S3 standard)
+    s_ledPin = prefs.getInt("ledpin", 38); // Reverted default to 38
     s_ledIsAuto = prefs.getBool("ledauto", true);
     s_ledBrightness = prefs.getUChar("ledbright", 128);
     s_ledManualColor = prefs.getUInt("ledcolor", 0x00FF00); // Default to green if not set
     prefs.end();
 
+    Serial.printf("[LED] Initialized on Pin: %d (Auto: %s, Brightness: %d)\n", 
+                  s_ledPin, s_ledIsAuto ? "YES" : "NO", s_ledBrightness);
+
     {
         std::lock_guard<std::mutex> lock(s_ledMutex);
         strip.setPin(s_ledPin);
         strip.begin();
-        strip.clear(); // Clear memory
         strip.setBrightness(s_ledBrightness);
         strip.show(); // Push to hardware immediately
     }
+
+    // Power-On Self Test (POST) - Blink R-G-B to confirm hardware and color order
+    Serial.println("[LED] Running POST blink sequence...");
+    ledSetColor(255, 0, 0); delay(200); // Red
+    ledSetColor(0, 255, 0); delay(200); // Green
+    ledSetColor(0, 0, 255); delay(200); // Blue
+    ledSetColor(0, 0, 0);   delay(100); 
     
     if (s_ledIsAuto) {
         ledSetStatusColor(LED_COLOR_NORMAL, false);

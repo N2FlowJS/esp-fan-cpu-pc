@@ -306,7 +306,7 @@ static void handleUdpDns(const uint8_t* payload, int len, int pl_off,
 // ── UDP / mDNS ────────────────────────────────────────────────────────────────
 
 static void handleUdpMdns(const uint8_t* payload, int len, int pl_off,
-                           const char* src_ip, const char* dst_ip, int rssi) {
+                           const char* src_ip, const char* dst_ip, int rssi, const char* src_mac) {
     s_mdnsCount = s_mdnsCount + 1;
     String sub = "Query", info = "mDNS";
     if (len >= pl_off + 12) {
@@ -316,6 +316,15 @@ static void handleUdpMdns(const uint8_t* payload, int len, int pl_off,
 
         int q_off = pl_off + 12;
         String name = parseDnsName(payload, len, q_off);
+
+        // If it's a response with a name, try to use it as a friendly name
+        if (qr && name.length() > 0 && name.indexOf('.') > 0) {
+            String friendly = name;
+            if (friendly.endsWith(".local")) friendly = friendly.substring(0, friendly.length() - 6);
+            if (friendly.indexOf("._") > 0) friendly = friendly.substring(0, friendly.indexOf("._"));
+            updateDeviceVendor(src_mac, friendly);
+        }
+
         String svc_tag = (name.indexOf("._tcp") > 0 || name.indexOf("._udp") > 0) ? " [svc]" : "";
 
         // Walk past name to find QTYPE
@@ -350,10 +359,9 @@ static void handleUdpMdns(const uint8_t* payload, int len, int pl_off,
 // ── UDP / DHCP ────────────────────────────────────────────────────────────────
 
 static void handleUdpDhcp(const uint8_t* payload, int len, int pl_off,
-                           const char* src_ip, const char* dst_ip, int rssi) {
+                           const char* src_ip, const char* dst_ip, int rssi, const char* src_mac) {
     s_dhcpCount = s_dhcpCount + 1;
-    String sub = "?", dhcp_ip, dhcp_srv, dhcp_host, dhcp_gw, dhcp_dns, dhcp_mask, dhcp_vendor;
-    uint32_t lease = 0;
+    String sub = "?", dhcp_ip, dhcp_srv, dhcp_host, dhcp_vendor;
 
     if (len >= pl_off + 240) {
         // yiaddr (offered IP)
@@ -386,38 +394,17 @@ static void handleUdpDhcp(const uint8_t* payload, int len, int pl_off,
                     char r[16]; snprintf(r,sizeof(r),"%d.%d.%d.%d",
                         payload[oi+2],payload[oi+3],payload[oi+4],payload[oi+5]);
                     if (!dhcp_ip.length()) dhcp_ip = String(r);
-                } else if (ot == 51 && ol == 4) {
-                    lease = ((uint32_t)payload[oi+2]<<24)|((uint32_t)payload[oi+3]<<16)
-                           |((uint32_t)payload[oi+4]<<8)|payload[oi+5];
-                } else if (ot == 54 && ol == 4) {
-                    char s[16]; snprintf(s,sizeof(s),"%d.%d.%d.%d",
-                        payload[oi+2],payload[oi+3],payload[oi+4],payload[oi+5]);
-                    dhcp_srv = String(s);
                 } else if (ot == 12) {
                     int hl = ol < 32 ? ol : 32;
                     char hb[33]; memcpy(hb, &payload[oi+2], hl); hb[hl]=0;
                     dhcp_host = String(hb);
+                    updateDeviceVendor(src_mac, dhcp_host);
                 } else if (ot == 60) {
                     int hl = ol < 32 ? ol : 32;
                     char vb[33]; memcpy(vb, &payload[oi+2], hl); vb[hl]=0;
                     dhcp_vendor = String(vb);
-                } else if (ot == 1 && ol == 4) {
-                    char r[16]; snprintf(r,sizeof(r),"%d.%d.%d.%d",
-                        payload[oi+2],payload[oi+3],payload[oi+4],payload[oi+5]);
-                    dhcp_mask = String(r);
-                } else if (ot == 3 && ol >= 4) {
-                    char r[16]; snprintf(r,sizeof(r),"%d.%d.%d.%d",
-                        payload[oi+2],payload[oi+3],payload[oi+4],payload[oi+5]);
-                    dhcp_gw = String(r);
-                } else if (ot == 6 && ol >= 4) {
-                    String dns_ips = "";
-                    for (int d = 0; d < ol && d < 8; d += 4) {
-                        char r[16]; snprintf(r,sizeof(r),"%d.%d.%d.%d",
-                            payload[oi+2+d],payload[oi+3+d],payload[oi+4+d],payload[oi+5+d]);
-                        if (dns_ips.length()) dns_ips += ",";
-                        dns_ips += String(r);
-                    }
-                    dhcp_dns = dns_ips;
+                    // Use DHCP Vendor as fallback if no host yet
+                    if (dhcp_host.length() == 0) updateDeviceVendor(src_mac, dhcp_vendor);
                 }
                 oi += 2 + ol;
             }
@@ -426,13 +413,9 @@ static void handleUdpDhcp(const uint8_t* payload, int len, int pl_off,
 
     String info = "DHCP " + sub;
     if (dhcp_ip.length())   info += "  ip="    + dhcp_ip;
-    if (dhcp_srv.length())  info += "  srv="   + dhcp_srv;
     if (dhcp_host.length()) info += "  host="  + dhcp_host;
     if (dhcp_vendor.length()) info += "  vendor=" + dhcp_vendor;
-    if (dhcp_mask.length()) info += "  mask="  + dhcp_mask;
-    if (dhcp_gw.length())   info += "  gw="    + dhcp_gw;
-    if (dhcp_dns.length())  info += "  dns="   + dhcp_dns;
-    if (lease > 0)          info += "  lease=" + String(lease/3600) + "h";
+
     addPacketLog("DHCP", sub, src_ip, dst_ip, rssi, len, info, nullptr, nullptr, payload, len);
     snifferLog("[SNIFFER] [DHCP %s] %s", sub.c_str(), info.c_str());
 }
@@ -441,7 +424,7 @@ static void handleUdpDhcp(const uint8_t* payload, int len, int pl_off,
 
 static void handleUdp(const uint8_t* payload, int len,
                        int ip_offset, int ip_hl,
-                       const char* src_ip, const char* dst_ip, int rssi) {
+                       const char* src_ip, const char* dst_ip, int rssi, const char* src_mac) {
     s_udpCount = s_udpCount + 1;
     int udp_off = ip_offset + ip_hl;
     if (len < udp_off + 8) return;
@@ -453,9 +436,9 @@ static void handleUdp(const uint8_t* payload, int len,
     if (src_port == 53 || dst_port == 53) {
         handleUdpDns(payload, len, pl_off, src_ip, dst_ip, src_port, dst_port, rssi);
     } else if (src_port == 5353 || dst_port == 5353) {
-        handleUdpMdns(payload, len, pl_off, src_ip, dst_ip, rssi);
+        handleUdpMdns(payload, len, pl_off, src_ip, dst_ip, rssi, src_mac);
     } else if ((src_port==67 && dst_port==68) || (src_port==68 && dst_port==67)) {
-        handleUdpDhcp(payload, len, pl_off, src_ip, dst_ip, rssi);
+        handleUdpDhcp(payload, len, pl_off, src_ip, dst_ip, rssi, src_mac);
     } else if (src_port == 1900 || dst_port == 1900) {
         handleUdpSsdp(payload, len, pl_off, src_ip, dst_ip, rssi);
     } else if (src_port == 123 || dst_port == 123) {
@@ -525,7 +508,7 @@ void dispatchIPv4Frame(const uint8_t* payload, int len,
     switch (protocol) {
         case 1:  handleIcmp(payload, len, ip_offset, ip_hl, src_ip, dst_ip, rssi); break;
         case 6:  handleTcp (payload, len, ip_offset, ip_hl, src_ip, dst_ip, rssi); break;
-        case 17: handleUdp (payload, len, ip_offset, ip_hl, src_ip, dst_ip, rssi); break;
+        case 17: handleUdp (payload, len, ip_offset, ip_hl, src_ip, dst_ip, rssi, src_mac); break;
         default: break;
     }
 }
